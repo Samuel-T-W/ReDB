@@ -1,0 +1,35 @@
+# Build output
+target/
+out/
+*.class
+
+# Generated database and index files
+*.db
+*.idx
+
+# Course-distributed data and local/generated CSV inputs — not stored in Git
+data/
+*.csv
+
+# Local editor and tool files
+.vscode/
+.claude/
+CLAUDE.md
+
+# OS metadata
+.DS_Store
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Local documents
+*.pdf
+
+# School deliverables — design docs and reports (kept locally, not published)
+design-document.md
+design-document-2.md
+design-document-3.md
+report/
+
+# Corrupted git backup (local only)
+.git.corrupted.bak/
