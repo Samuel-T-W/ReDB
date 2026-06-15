@@ -6,6 +6,7 @@ out/
 # Generated database and index files
 *.db
 *.idx
+query_results.csv
 
 # Benchmark output and Python cache
 benchmark/results/

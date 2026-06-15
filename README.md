@@ -94,7 +94,7 @@ Example:
 ./run.sh run_query "the" "thez" 20
 ```
 
-The query finds the people associated with records whose title falls in `[start_range, end_range]`, executing a fixed plan of selections, projections, and block nested loop joins. Results are printed to stdout as fixed-length CSV.
+The query finds the people associated with records whose title falls in `[start_range, end_range]`, executing a fixed plan of selections, projections, and block nested loop joins. Results are written to `query_results.csv`.
 
 ## Data
 
