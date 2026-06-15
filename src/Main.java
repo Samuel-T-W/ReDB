@@ -1,8 +1,10 @@
+import util.Metrics;
+
 public class Main {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size>");
+            System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size> [--index] [--metrics]");
             System.exit(1);
         }
 
@@ -34,12 +36,33 @@ public class Main {
                     System.exit(1);
                     return;
                 }
-                if (bufferSize <= 0) {
-                    System.err.println("Error: buffer_size must be a positive integer, got: " + bufferSize);
+                if (bufferSize < 3) {
+                    System.err.println("Error: buffer_size must be at least 3 to run BNL join");
                     System.exit(1);
                 }
-                boolean useIndex = args.length > 4 && args[4].equals("--index");
-                RunQuery.run(start, end, bufferSize, useIndex);
+                // Optional flags after the positional args, in any order:
+                // --index uses the B+ tree access method; --metrics prints timing/memory.
+                boolean useIndex = false;
+                boolean metrics = false;
+                for (int i = 4; i < args.length; i++) {
+                    switch (args[i]) {
+                        case "--index" -> useIndex = true;
+                        case "--metrics" -> metrics = true;
+                        default -> {
+                            System.err.println("Unknown run_query option: " + args[i]);
+                            System.exit(1);
+                            return;
+                        }
+                    }
+                }
+
+                // Time only the query execution, excluding arg parsing and startup.
+                long startNanos = System.nanoTime();
+                long resultCount = RunQuery.run(start, end, bufferSize, useIndex);
+                long elapsedNanos = System.nanoTime() - startNanos;
+                if (metrics) {
+                    Metrics.report(elapsedNanos, resultCount);
+                }
             }
             default -> {
                 System.err.println("Unknown command: " + args[0]);
