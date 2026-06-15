@@ -7,9 +7,9 @@ out/
 *.db
 *.idx
 
-# Course-distributed data and local/generated CSV inputs — not stored in Git
-data/
-*.csv
+# Benchmark output and Python cache
+benchmark/results/
+__pycache__/
 
 # Local editor and tool files
 .vscode/
@@ -22,14 +22,15 @@ CLAUDE.md
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
-# Local documents
-*.pdf
+# Course-distributed data not stored in Git
+data/
 
 # School deliverables — design docs and reports (kept locally, not published)
 design-document.md
 design-document-2.md
 design-document-3.md
 report/
+*.pdf
 
 # Corrupted git backup (local only)
 .git.corrupted.bak/
