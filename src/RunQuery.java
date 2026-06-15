@@ -1,8 +1,12 @@
 import buffer.BufferManager;
 import buffer.IndexEntry;
 import buffer.TableEntry;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,6 +29,7 @@ public class RunQuery {
     static final String PEOPLE_DB   = "people.db";
     static final String TITLE_IDX   = "title.idx";
     static final String WORKEDON_TMP = "workedon_proj_tmp.db";
+    static final String QUERY_RESULTS = "query_results.csv";
 
     static final Map<String, Integer> MOVIES_SCHEMA   = new LinkedHashMap<>();
     static final Map<String, Integer> WORKEDON_SCHEMA = new LinkedHashMap<>();
@@ -42,16 +47,15 @@ public class RunQuery {
         PEOPLE_SCHEMA.put("name",    105);
     }
 
-    public static void run(String startRange, String endRange, int bufferSize) throws IOException {
-        run(startRange, endRange, bufferSize, false);
-    }
-
-    public static void run(String startRange, String endRange, int bufferSize, boolean useIndex) throws IOException {
+    public static long run(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
         int N = (bufferSize - 1) / 2;
         if (N < 1) {
-            System.err.println("Error: buffer_size must be at least 3 to run BNL join");
-            return;
+            throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
         BufferManager bm = new BufferManager(bufferSize);
@@ -132,16 +136,31 @@ public class RunQuery {
 
         // ---- Execute --------------------------------------------------------
         finalProj.open();
-        GenericRecord result;
-        while ((result = finalProj.next()) != null) {
-            String title = new String(result.getFieldBytes("title")).trim();
-            String name  = new String(result.getFieldBytes("name")).trim();
-            System.out.println(title + "," + name);
+        long resultCount = 0;
+        // BufferedWriter collects small writes in memory and sends them to the
+        // file in larger batches, avoiding a disk write for every field or row.
+        // newBufferedWriter creates or overwrites query_results.csv by default.
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                Path.of(QUERY_RESULTS), StandardCharsets.UTF_8)) {
+            GenericRecord result;
+            while ((result = finalProj.next()) != null) {
+                String title = new String(result.getFieldBytes("title")).trim();
+                String name  = new String(result.getFieldBytes("name")).trim();
+                writer.write(title);
+                writer.write(',');
+                writer.write(name);
+                writer.newLine();
+                resultCount++;
+            }
+        // try-with-resources flushes any buffered text and closes the file,
+        // including when an exception interrupts query execution.
+        } finally {
+            finalProj.close();
         }
-        finalProj.close();
 
         // ---- Cleanup temp file ----------------------------------------------
         wkProj.cleanup();
         new File(WORKEDON_TMP).delete();
+        return resultCount;
     }
 }

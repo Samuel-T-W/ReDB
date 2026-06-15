@@ -7,7 +7,7 @@
 # Steps:
 #   1. Compile (if target/classes is missing)
 #   2. Run pre_process (if DB files are missing)
-#   3. Run run_query, sort output -> /tmp/java_output.txt
+#   3. Run run_query, sort query_results.csv -> /tmp/java_output.txt
 #   4. Print PostgreSQL setup + diff instructions
 set -e
 cd "$(dirname "$0")/.."
@@ -35,7 +35,8 @@ fi
 
 # Step 3: run query and sort
 echo "Running: run_query \"$START\" \"$END\" $BUFFER"
-"$JAVA" -cp target/classes Main run_query "$START" "$END" $BUFFER | sort > /tmp/java_output.txt
+"$JAVA" -cp target/classes Main run_query "$START" "$END" $BUFFER
+sort query_results.csv > /tmp/java_output.txt
 echo "Java output: $(wc -l < /tmp/java_output.txt | tr -d ' ') line(s) -> /tmp/java_output.txt"
 head -5 /tmp/java_output.txt
 
