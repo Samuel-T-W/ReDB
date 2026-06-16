@@ -9,8 +9,8 @@ import platform
 import subprocess
 import threading
 from pathlib import Path
-from typing import Sequence, TypedDict
-
+import os
+from typing import Sequence, TypedDict, overload
 
 class ProcessSample(TypedDict):
     """One operating-system measurement for a query process."""
@@ -35,13 +35,65 @@ class GroupMetrics(TypedDict):
     memory_pid_samples_attempted: int
     memory_pid_samples_successful: int
     memory_pid_samples_failed: int
+    host_cpu_count: int | None
+    host_memory_total_bytes: int | None
+    host_memory_available_min_bytes: int | None
+    host_memory_available_mean_bytes: float | None
+    host_swap_used_max_bytes: int | None
+    host_cpu_utilization_mean_pct: float | None
+    host_cpu_utilization_max_pct: float | None
+    host_loadavg_1m_max: float | None
+    host_samples_attempted: int
+    host_samples_successful: int
 
 
+class HostSample(TypedDict):
+    """One host-level operating-system sample."""
+
+    memory_total_bytes: int | None
+    memory_available_bytes: int | None
+    swap_used_bytes: int | None
+    cpu_total: int | None
+    cpu_idle: int | None
+    loadavg_1m: float | None
+
+
+@overload
 def max_optional(current: int | None, candidate: int | None) -> int | None:
+    ...
+
+
+@overload
+def max_optional(current: float | None, candidate: float | None) -> float | None:
+    ...
+
+
+def max_optional(
+    current: int | float | None, candidate: int | float | None
+) -> int | float | None:
     """Return the larger value while allowing either measurement to be None."""
     if candidate is None:
         return current
     return candidate if current is None else max(current, candidate)
+
+
+@overload
+def min_optional(current: int | None, candidate: int | None) -> int | None:
+    ...
+
+
+@overload
+def min_optional(current: float | None, candidate: float | None) -> float | None:
+    ...
+
+
+def min_optional(
+    current: int | float | None, candidate: int | float | None
+) -> int | float | None:
+    """Return the smaller value while allowing either measurement to be None."""
+    if candidate is None:
+        return current
+    return candidate if current is None else min(current, candidate)
 
 
 class ProcessMemoryMonitor:
@@ -57,6 +109,20 @@ class ProcessMemoryMonitor:
         self.pid_samples_attempted = 0
         self.pid_samples_successful = 0
         self.pid_samples_failed = 0
+        self.host_cpu_count = os.cpu_count()
+        self.host_memory_total_bytes: int | None = None
+        self.host_memory_available_min_bytes: int | None = None
+        self.host_memory_available_sum_bytes = 0
+        self.host_memory_available_count = 0
+        self.host_swap_used_max_bytes: int | None = None
+        self.host_cpu_utilization_sum_pct = 0.0
+        self.host_cpu_utilization_count = 0
+        self.host_cpu_utilization_max_pct: float | None = None
+        self.host_loadavg_1m_max: float | None = None
+        self.host_samples_attempted = 0
+        self.host_samples_successful = 0
+        self.previous_cpu_total: int | None = None
+        self.previous_cpu_idle: int | None = None
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -105,16 +171,34 @@ class ProcessMemoryMonitor:
                 if worker is not None:
                     self._update_worker(worker, sample)
 
-
- 
     def group_metrics(self) -> GroupMetrics:
         """Return aggregate peak memory and per-PID sampling counts."""
         with self.lock:
+            memory_available_mean = (
+                self.host_memory_available_sum_bytes / self.host_memory_available_count
+                if self.host_memory_available_count
+                else None
+            )
+            cpu_utilization_mean = (
+                self.host_cpu_utilization_sum_pct / self.host_cpu_utilization_count
+                if self.host_cpu_utilization_count
+                else None
+            )
             return {
                 "aggregate_peak_rss_bytes": self.peak_total_rss_bytes,
                 "memory_pid_samples_attempted": self.pid_samples_attempted,
                 "memory_pid_samples_successful": self.pid_samples_successful,
                 "memory_pid_samples_failed": self.pid_samples_failed,
+                "host_cpu_count": self.host_cpu_count,
+                "host_memory_total_bytes": self.host_memory_total_bytes,
+                "host_memory_available_min_bytes": self.host_memory_available_min_bytes,
+                "host_memory_available_mean_bytes": memory_available_mean,
+                "host_swap_used_max_bytes": self.host_swap_used_max_bytes,
+                "host_cpu_utilization_mean_pct": cpu_utilization_mean,
+                "host_cpu_utilization_max_pct": self.host_cpu_utilization_max_pct,
+                "host_loadavg_1m_max": self.host_loadavg_1m_max,
+                "host_samples_attempted": self.host_samples_attempted,
+                "host_samples_successful": self.host_samples_successful,
             }
 
     def _run(self) -> None:
@@ -128,6 +212,7 @@ class ProcessMemoryMonitor:
         """Read all active workers and update per-worker and aggregate peaks."""
         with self.lock:
             pids = list(self.workers)
+        host_sample = self._read_host_sample()
         if platform.system() == "Linux":
             samples = [(pid, self._read_linux_process(pid)) for pid in pids]
         else:
@@ -144,11 +229,12 @@ class ProcessMemoryMonitor:
                     if worker is not None:
                         self._update_worker(worker, sample)
             if valid_samples:
-                self.peak_total_rss_bytes = max_optional(
-                    self.peak_total_rss_bytes, total_rss_bytes
+                self.peak_total_rss_bytes = (
+                    total_rss_bytes
+                    if self.peak_total_rss_bytes is None
+                    else max(self.peak_total_rss_bytes, total_rss_bytes)
                 )
-
-# ------------ here ------------------- 
+            self._record_host_sample(host_sample)
 
     def _record_sample_result(self, sample: ProcessSample | None) -> None:
         """Record whether one attempted PID sample returned every metric."""
@@ -161,6 +247,49 @@ class ProcessMemoryMonitor:
             self.pid_samples_successful += 1
         else:
             self.pid_samples_failed += 1
+
+    def _record_host_sample(self, sample: HostSample | None) -> None:
+        """Merge one host-level sample into the group-level metrics."""
+        self.host_samples_attempted += 1
+        if sample is None:
+            return
+        self.host_samples_successful += 1
+
+        memory_total = sample["memory_total_bytes"]
+        if memory_total is not None:
+            self.host_memory_total_bytes = memory_total
+
+        memory_available = sample["memory_available_bytes"]
+        if memory_available is not None:
+            self.host_memory_available_min_bytes = min_optional(
+                self.host_memory_available_min_bytes, memory_available
+            )
+            self.host_memory_available_sum_bytes += memory_available
+            self.host_memory_available_count += 1
+
+        self.host_swap_used_max_bytes = max_optional(
+            self.host_swap_used_max_bytes, sample["swap_used_bytes"]
+        )
+        self.host_loadavg_1m_max = max_optional(
+            self.host_loadavg_1m_max, sample["loadavg_1m"]
+        )
+
+        cpu_total = sample["cpu_total"]
+        cpu_idle = sample["cpu_idle"]
+        if cpu_total is None or cpu_idle is None:
+            return
+        if self.previous_cpu_total is not None and self.previous_cpu_idle is not None:
+            total_delta = cpu_total - self.previous_cpu_total
+            idle_delta = cpu_idle - self.previous_cpu_idle
+            if total_delta > 0 and idle_delta >= 0:
+                utilization = max(0.0, min(100.0, 100.0 * (1 - idle_delta / total_delta)))
+                self.host_cpu_utilization_sum_pct += utilization
+                self.host_cpu_utilization_count += 1
+                self.host_cpu_utilization_max_pct = max_optional(
+                    self.host_cpu_utilization_max_pct, utilization
+                )
+        self.previous_cpu_total = cpu_total
+        self.previous_cpu_idle = cpu_idle
 
     @staticmethod
     def _update_worker(worker: WorkerMetrics, sample: ProcessSample) -> None:
@@ -181,6 +310,65 @@ class ProcessMemoryMonitor:
         if platform.system() == "Linux":
             return ProcessMemoryMonitor._read_linux_process(pid)
         return ProcessMemoryMonitor._read_ps_process(pid)
+
+    @staticmethod
+    def _read_host_sample() -> HostSample | None:
+        """Read host CPU, memory, swap, and load metrics when available."""
+        if platform.system() == "Linux":
+            return ProcessMemoryMonitor._read_linux_host_sample()
+        return ProcessMemoryMonitor._read_portable_host_sample()
+
+    @staticmethod
+    def _read_linux_host_sample() -> HostSample | None:
+        """Read host-level metrics from Linux procfs."""
+        try:
+            meminfo = {}
+            with Path("/proc/meminfo").open(encoding="utf-8") as handle:
+                for line in handle:
+                    key, rest = line.split(":", 1)
+                    fields = rest.split()
+                    if fields:
+                        meminfo[key] = int(fields[0]) * 1024
+
+            cpu_fields = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0].split()
+            cpu_values = [int(value) for value in cpu_fields[1:]]
+            cpu_idle = cpu_values[3] + (cpu_values[4] if len(cpu_values) > 4 else 0)
+            cpu_total = sum(cpu_values)
+
+            loadavg_1m = float(Path("/proc/loadavg").read_text(encoding="utf-8").split()[0])
+            swap_total = meminfo.get("SwapTotal")
+            swap_free = meminfo.get("SwapFree")
+            swap_used = (
+                swap_total - swap_free
+                if swap_total is not None and swap_free is not None
+                else None
+            )
+            return {
+                "memory_total_bytes": meminfo.get("MemTotal"),
+                "memory_available_bytes": meminfo.get("MemAvailable"),
+                "swap_used_bytes": swap_used,
+                "cpu_total": cpu_total,
+                "cpu_idle": cpu_idle,
+                "loadavg_1m": loadavg_1m,
+            }
+        except (OSError, ValueError, IndexError):
+            return None
+
+    @staticmethod
+    def _read_portable_host_sample() -> HostSample | None:
+        """Read the limited host metrics available outside Linux."""
+        try:
+            loadavg_1m = os.getloadavg()[0]
+        except (AttributeError, OSError):
+            loadavg_1m = None
+        return {
+            "memory_total_bytes": None,
+            "memory_available_bytes": None,
+            "swap_used_bytes": None,
+            "cpu_total": None,
+            "cpu_idle": None,
+            "loadavg_1m": loadavg_1m,
+        }
 
     @staticmethod
     def _read_linux_process(pid: int) -> ProcessSample | None:

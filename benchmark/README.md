@@ -20,6 +20,19 @@ mvn compile
 
 ## Run
 
+Normal benchmark run:
+
+```bash
+python3 benchmark/run_benchmark.py \
+  --concurrency 1,2,4 \
+  --repetitions 5 \
+  --warmups 1 \
+  --buffer-size 20 \
+  --run-label "first run"
+```
+
+For repeat runs after compiling, skip the Maven build step:
+
 ```bash
 python3 benchmark/run_benchmark.py \
   --concurrency 1,2,4 \
@@ -70,6 +83,10 @@ The default output writes:
 
 The `run_id` is always the run's UTC timestamp.
 
+New benchmark versions may append additional columns to the aggregate CSVs.
+Existing rows are preserved and older runs show blank values for columns that
+did not exist when they were recorded.
+
 ## Results
 
 Runs only update the aggregate files above.
@@ -104,3 +121,20 @@ The summary records attempted, successful, and failed per-PID memory samples.
 A sample is successful only when RSS, minor faults, and major faults are all
 available. Available values from incomplete samples still contribute to the
 corresponding memory and page-fault metrics.
+
+The summary also records host-level context for each measured concurrency
+group:
+
+- `host_cpu_count`: logical CPU count visible to the OS.
+- `host_memory_total_mb`: machine memory.
+- `host_memory_available_min_mb`: lowest sampled available memory.
+- `host_memory_available_mean_mb`: average sampled available memory.
+- `host_swap_used_max_mb`: highest sampled swap usage.
+- `host_cpu_utilization_mean_pct`: average whole-machine CPU utilization.
+- `host_cpu_utilization_max_pct`: peak sampled whole-machine CPU utilization.
+- `host_loadavg_1m_max`: highest sampled 1-minute load average.
+- `host_samples_attempted` / `host_samples_successful`: host sampler coverage.
+
+On Linux these values come from `/proc/stat`, `/proc/meminfo`, and
+`/proc/loadavg`. They help distinguish true memory pressure from ordinary
+file-backed page faults and filesystem cache misses.

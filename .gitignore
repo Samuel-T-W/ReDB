@@ -16,6 +16,7 @@ __pycache__/
 .vscode/
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # OS metadata
 .DS_Store

@@ -466,7 +466,8 @@ def main() -> int:
     print()
     print(
         f"{'workers':>7} {'ok':>5} {'fail':>5} {'qps':>10} "
-        f"{'p50_ms':>12} {'p95_ms':>12} {'peak_rss_mb':>13}"
+        f"{'p50_ms':>12} {'p95_ms':>12} {'peak_rss_mb':>13} "
+        f"{'host_cpu_%':>11} {'avail_mem_mb':>13}"
     )
     for summary in summaries:
         print(
@@ -474,7 +475,9 @@ def main() -> int:
             f"{summary['failed']:>5} {summary['throughput_qps']:>10.3f} "
             f"{display_metric(summary['latency_p50_ms']):>12} "
             f"{display_metric(summary['latency_p95_ms']):>12} "
-            f"{display_metric(summary['aggregate_peak_rss_mb']):>13}"
+            f"{display_metric(summary['aggregate_peak_rss_mb']):>13} "
+            f"{display_metric(summary['host_cpu_utilization_mean_pct']):>11} "
+            f"{display_metric(summary['host_memory_available_min_mb']):>13}"
         )
     print(f"\nAggregate raw results: {aggregate_raw_path}")
     print(f"Aggregate summary:     {aggregate_summary_path}")

@@ -58,6 +58,19 @@ def append_csv(
     fieldnames: Sequence[str],
 ) -> None:
     """Append dictionaries to a UTF-8 CSV, creating the header when needed."""
+    if path.exists() and path.stat().st_size > 0:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            existing_fieldnames = list(reader.fieldnames or [])
+            existing_rows = list(reader)
+        if existing_fieldnames != list(fieldnames):
+            merged_fieldnames = [
+                *existing_fieldnames,
+                *(field for field in fieldnames if field not in existing_fieldnames),
+            ]
+            write_csv(path, existing_rows, merged_fieldnames)
+            fieldnames = merged_fieldnames
+
     write_header = not path.exists() or path.stat().st_size == 0
     with path.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -120,4 +133,20 @@ def summarize(
             "memory_pid_samples_successful"
         ],
         "memory_pid_samples_failed": group_metrics["memory_pid_samples_failed"],
+        "host_cpu_count": group_metrics["host_cpu_count"],
+        "host_memory_total_mb": bytes_to_mb(group_metrics["host_memory_total_bytes"]),
+        "host_memory_available_min_mb": bytes_to_mb(
+            group_metrics["host_memory_available_min_bytes"]
+        ),
+        "host_memory_available_mean_mb": bytes_to_mb(
+            group_metrics["host_memory_available_mean_bytes"]
+        ),
+        "host_swap_used_max_mb": bytes_to_mb(group_metrics["host_swap_used_max_bytes"]),
+        "host_cpu_utilization_mean_pct": group_metrics[
+            "host_cpu_utilization_mean_pct"
+        ],
+        "host_cpu_utilization_max_pct": group_metrics["host_cpu_utilization_max_pct"],
+        "host_loadavg_1m_max": group_metrics["host_loadavg_1m_max"],
+        "host_samples_attempted": group_metrics["host_samples_attempted"],
+        "host_samples_successful": group_metrics["host_samples_successful"],
     }
