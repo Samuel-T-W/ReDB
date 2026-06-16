@@ -19,9 +19,9 @@ from memory_monitor import GroupMetrics, ProcessMemoryMonitor
 from metrics import metric_value, nanos_to_millis, parse_engine_metrics
 from reporting import (
     ResultRow,
+    append_csv,
     display_metric,
     summarize,
-    write_csv,
 )
 
 
@@ -49,6 +49,7 @@ class BenchmarkArgs(argparse.Namespace):
     skip_build: bool
     java_xmx: str | None
     memory_sample_ms: int
+    run_label: str | None
 
 
 def parse_args() -> BenchmarkArgs:
@@ -106,6 +107,10 @@ def parse_args() -> BenchmarkArgs:
         type=int,
         default=50,
         help="OS process-memory sampling interval in milliseconds (default: 50).",
+    )
+    parser.add_argument(
+        "--run-label",
+        help="Optional human-readable label attached to output rows.",
     )
     args = parser.parse_args()
 
@@ -344,9 +349,27 @@ def main() -> int:
     work_parent = args.output_dir / ".workers"
     work_parent.mkdir(exist_ok=True)
     run_stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    raw_path = args.output_dir / f"{run_stamp}_raw.csv"
-    summary_path = args.output_dir / f"{run_stamp}_summary.csv"
-    metadata_path = args.output_dir / f"{run_stamp}_metadata.json"
+    run_created_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    run_id = run_stamp
+    aggregate_raw_path = args.output_dir / "all_raw.csv"
+    aggregate_summary_path = args.output_dir / "all_summary.csv"
+    aggregate_metadata_path = args.output_dir / "all_metadata.jsonl"
+
+    run_context = {
+        "run_id": run_id,
+        "run_label": args.run_label or "",
+        "run_created_at_utc": run_created_at,
+    }
+
+    summary_context = {
+        **run_context,
+        "buffer_size": args.buffer_size,
+        "use_index": args.index,
+        "repetitions": args.repetitions,
+        "warmups": args.warmups,
+        "java_xmx": args.java_xmx or "",
+        "workload_file": str(args.workload),
+    }
 
     # Each concurrency level gets unrecorded warmups followed by measured runs.
     all_rows = []
@@ -373,10 +396,17 @@ def main() -> int:
             args,
             False,
         )
+        for row in rows:
+            row.update(run_context)
         all_rows.extend(rows)
-        summaries.append(summarize(rows, concurrency, makespan_seconds, group_metrics))
+        summary = summarize(rows, concurrency, makespan_seconds, group_metrics)
+        summary.update(summary_context)
+        summaries.append(summary)
 
     raw_fields = [
+        "run_id",
+        "run_label",
+        "run_created_at_utc",
         "started_at_utc",
         "concurrency",
         "repetition",
@@ -401,12 +431,12 @@ def main() -> int:
         "error",
     ]
     summary_fields = list(summaries[0].keys())
-    write_csv(raw_path, all_rows, raw_fields)
-    write_csv(summary_path, summaries, summary_fields)
 
     # Metadata makes benchmark results reproducible and easier to compare.
     metadata = {
-        "created_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "run_id": run_id,
+        "run_label": args.run_label or "",
+        "created_at_utc": run_created_at,
         "git_commit": git_value(root, "rev-parse", "HEAD"),
         "git_dirty": bool(git_value(root, "status", "--porcelain")),
         "platform": platform.platform(),
@@ -426,7 +456,11 @@ def main() -> int:
         },
         "summaries": summaries,
     }
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+    append_csv(aggregate_raw_path, all_rows, raw_fields)
+    append_csv(aggregate_summary_path, summaries, summary_fields)
+    with aggregate_metadata_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(metadata, sort_keys=True) + "\n")
 
     # Print a compact human-readable view; detailed data remains in the files.
     print()
@@ -442,9 +476,9 @@ def main() -> int:
             f"{display_metric(summary['latency_p95_ms']):>12} "
             f"{display_metric(summary['aggregate_peak_rss_mb']):>13}"
         )
-    print(f"\nRaw results: {raw_path}")
-    print(f"Summary:     {summary_path}")
-    print(f"Metadata:    {metadata_path}")
+    print(f"\nAggregate raw results: {aggregate_raw_path}")
+    print(f"Aggregate summary:     {aggregate_summary_path}")
+    print(f"Aggregate metadata:    {aggregate_metadata_path}")
     return 1 if any(summary["failed"] for summary in summaries) else 0
 
 

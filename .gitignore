@@ -35,3 +35,7 @@ report/
 
 # Corrupted git backup (local only)
 .git.corrupted.bak/
+
+# secrets
+*.pem
+*.env

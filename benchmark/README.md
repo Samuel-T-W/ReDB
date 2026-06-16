@@ -42,22 +42,37 @@ Useful options:
 --java-xmx 1g           cap each worker JVM's maximum heap
 --memory-sample-ms 50   OS memory sampling interval
 --output-dir            choose the result directory
+--run-label             attach a human-readable label to output rows
 ```
 
 `-Xmx` limits the Java heap, not total process or machine memory. Use a VM,
 container, or cgroup when a strict total-memory limit is required.
 
+For analysis workflows, the default behavior keeps one growing CSV instead of
+one file per benchmark invocation. Every run appends to stable aggregate files:
+
+```bash
+python3 benchmark/run_benchmark.py \
+  --concurrency 1,2,4 \
+  --repetitions 5 \
+  --warmups 1 \
+  --buffer-size 20 \
+  --skip-build \
+  --run-label no-index-buffer-20
+```
+
+The default output writes:
+
+- `all_raw.csv`: one row per query process with `run_id`.
+- `all_summary.csv`: one row per concurrency level with `run_id` and config
+  columns such as `buffer_size`, `use_index`, `repetitions`, and `java_xmx`.
+- `all_metadata.jsonl`: one JSON object per benchmark invocation.
+
+The `run_id` is always the run's UTC timestamp.
+
 ## Results
 
-Every run creates three timestamped files under `benchmark/results/`:
-
-- `*_raw.csv`: one row per query, including engine latency, process wall time,
-  CPU time, JVM heap usage, sampled peak resident memory, page faults, result
-  count, and failure details.
-- `*_summary.csv`: throughput, latency, CPU utilization, per-worker peak memory,
-  aggregate peak worker memory, page faults, and swap activity by concurrency.
-- `*_metadata.json`: benchmark configuration, Git commit, Java version, and
-  machine metadata.
+Runs only update the aggregate files above.
 
 `query_elapsed_ms` is measured inside the already-started JVM around the full
 query call, including creation of the buffer manager and query plan.

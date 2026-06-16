@@ -52,6 +52,20 @@ def write_csv(
         writer.writerows(rows)
 
 
+def append_csv(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+    fieldnames: Sequence[str],
+) -> None:
+    """Append dictionaries to a UTF-8 CSV, creating the header when needed."""
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
 def summarize(
     rows: Sequence[ResultRow],
     concurrency: int,
