@@ -126,7 +126,13 @@ class ProcessMemoryMonitor:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
-        """Start the background sampling thread."""
+        """Capture an initial CPU baseline, then start the sampling thread."""
+        # Prime the CPU counters so the first recorded sample can already
+        # produce a utilization delta instead of being skipped.
+        baseline = self._read_host_sample()
+        if baseline is not None:
+            self.previous_cpu_total = baseline["cpu_total"]
+            self.previous_cpu_idle = baseline["cpu_idle"]
         self.thread.start()
 
     def stop(self) -> None:
@@ -229,10 +235,8 @@ class ProcessMemoryMonitor:
                     if worker is not None:
                         self._update_worker(worker, sample)
             if valid_samples:
-                self.peak_total_rss_bytes = (
-                    total_rss_bytes
-                    if self.peak_total_rss_bytes is None
-                    else max(self.peak_total_rss_bytes, total_rss_bytes)
+                self.peak_total_rss_bytes = max_optional(
+                    self.peak_total_rss_bytes, total_rss_bytes
                 )
             self._record_host_sample(host_sample)
 
@@ -251,7 +255,7 @@ class ProcessMemoryMonitor:
     def _record_host_sample(self, sample: HostSample | None) -> None:
         """Merge one host-level sample into the group-level metrics."""
         self.host_samples_attempted += 1
-        if sample is None:
+        if sample is None or all(value is None for value in sample.values()):
             return
         self.host_samples_successful += 1
 

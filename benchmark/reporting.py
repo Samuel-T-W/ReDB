@@ -6,6 +6,7 @@ None of these touch processes or the filesystem beyond writing a CSV.
 
 import csv
 import math
+import os
 import statistics
 from pathlib import Path
 from typing import Any, Mapping, Sequence, TypeAlias
@@ -58,17 +59,25 @@ def append_csv(
     fieldnames: Sequence[str],
 ) -> None:
     """Append dictionaries to a UTF-8 CSV, creating the header when needed."""
+    fieldnames = list(fieldnames)
     if path.exists() and path.stat().st_size > 0:
+        # Read only the header line to decide whether the schema changed; the
+        # accumulated history can be large and is never modified on the common
+        # (matching-schema) path.
         with path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            existing_fieldnames = list(reader.fieldnames or [])
-            existing_rows = list(reader)
-        if existing_fieldnames != list(fieldnames):
+            existing_fieldnames = next(csv.reader(handle), [])
+        if existing_fieldnames != fieldnames:
             merged_fieldnames = [
                 *existing_fieldnames,
                 *(field for field in fieldnames if field not in existing_fieldnames),
             ]
-            write_csv(path, existing_rows, merged_fieldnames)
+            with path.open(newline="", encoding="utf-8") as handle:
+                existing_rows = list(csv.DictReader(handle))
+            # Rewrite to a temp file and atomically swap so a crash mid-rewrite
+            # cannot leave the history truncated.
+            tmp_path = path.with_name(path.name + ".tmp")
+            write_csv(tmp_path, existing_rows, merged_fieldnames)
+            os.replace(tmp_path, path)
             fieldnames = merged_fieldnames
 
     write_header = not path.exists() or path.stat().st_size == 0
