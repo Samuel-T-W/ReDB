@@ -1,7 +1,6 @@
 package buffer;
 
 import catalog.CatalogEntry;
-import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.HashMap;
@@ -18,7 +17,7 @@ public class BufferManager {
 	final int bufferSize;
 
 	private Map<String, CatalogEntry> catalog;
-	private Map<String, Integer> maxPageIdPerFile = new HashMap<>();
+	private Map<String, FileState> fileStates = new HashMap<>();
 	private Map<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
 	private Queue<Integer> freeFrameIndices;
@@ -95,16 +94,14 @@ public class BufferManager {
 		return addToFrame(pageKey, page, true);
 	}
 
-	/**
-	 * Returns the next available page ID for the given file, and advances the
-	 * internal counter.
-	 */
-	private int getNextPageId(String fileId) throws IOException {
-		int pageCount = calculatePageCount(fileId);
-		int maxPageId = maxPageIdPerFile.getOrDefault(fileId, 0);
-		int nextPageId = Math.max(pageCount, maxPageId);
-		maxPageIdPerFile.put(fileId, nextPageId + 1);
-		return nextPageId;
+	/** Returns the FileState for the given file, creating it on first use. */
+	private FileState getOrCreateFileState(String fileId) {
+		FileState fileState = fileStates.get(fileId);
+		if (fileState == null) {
+			fileState = new FileState(fileId);
+			fileStates.put(fileId, fileState);
+		}
+		return fileState;
 	}
 
 	/**
@@ -120,7 +117,7 @@ public class BufferManager {
 	 * @return The RawPage whose content is stored in a frame of the buffer pool.
 	 */
 	public RawPage createPage(String fileId, byte[] data) throws IOException {
-		int nextPageId = getNextPageId(fileId);
+		int nextPageId = getOrCreateFileState(fileId).allocatePageId();
 		PageKey pageKey = new PageKey(fileId, nextPageId);
 
 		RawPage page = new RawPage(nextPageId);
@@ -223,20 +220,6 @@ public class BufferManager {
 			raf.seek(offset);
 			raf.write(page.getByteArray());
 		}
-	}
-
-	private int calculatePageCount(String fileId) throws ArithmeticException, IllegalStateException {
-		File file = new File(fileId);
-
-		// don't expect long amount of bytes for this project, throw if encountered
-		int fileLength = Math.toIntExact(file.length());
-
-		// all pages should be exactly RawPage.MAX_PAGE_LEN long
-		if (fileLength % RawPage.MAX_PAGE_LEN != 0) {
-			throw new IllegalStateException("File size is not a multiple of pages");
-		}
-
-		return fileLength / RawPage.MAX_PAGE_LEN;
 	}
 
 	private Page addToFrame(PageKey pageKey, Page page, boolean is_pinned) throws IOException, IllegalStateException {
