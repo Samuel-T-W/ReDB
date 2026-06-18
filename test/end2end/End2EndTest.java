@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static testutil.TestUtils.*;
 
 import buffer.*;
+import catalog.TableEntry;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;

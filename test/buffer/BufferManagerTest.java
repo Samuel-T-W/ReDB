@@ -3,6 +3,7 @@ package buffer;
 import static org.junit.jupiter.api.Assertions.*;
 import static testutil.TestUtils.*;
 
+import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;

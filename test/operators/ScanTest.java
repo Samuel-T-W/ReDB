@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static testutil.TestUtils.*;
 
 import buffer.BufferManager;
-import buffer.TableEntry;
+import catalog.TableEntry;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

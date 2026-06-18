@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static testutil.TestUtils.*;
 
 import buffer.*;
+import catalog.IndexEntry;
+import catalog.TableEntry;
 import java.io.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;

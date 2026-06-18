@@ -1,4 +1,4 @@
-package buffer;
+package catalog;
 
 import java.io.File;
 import java.util.Map;

@@ -3,8 +3,8 @@ package perf;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import buffer.BufferManager;
-import buffer.IndexEntry;
-import buffer.TableEntry;
+import catalog.IndexEntry;
+import catalog.TableEntry;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;

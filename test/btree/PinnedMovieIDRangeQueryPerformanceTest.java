@@ -3,6 +3,8 @@ package btree;
 import static testutil.TestUtils.*;
 
 import buffer.*;
+import catalog.IndexEntry;
+import catalog.TableEntry;
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.*;

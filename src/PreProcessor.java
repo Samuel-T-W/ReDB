@@ -1,6 +1,6 @@
 import buffer.BufferManager;
-import buffer.IndexEntry;
-import buffer.TableEntry;
+import catalog.IndexEntry;
+import catalog.TableEntry;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
