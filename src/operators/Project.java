@@ -14,6 +14,11 @@ public class Project implements Operator {
     private final Operator child;
     private final Map<String, Integer> outputSchema;
 
+    // When true, the child is drained into a temp file on open() and rows are
+    // served by scanning that file (so repeated rescans, e.g. a BNL inner side,
+    // are cheap). When false, projection is pipelined one record at a time.
+    private final boolean materialize;
+
     // Materializing-mode fields (null when pipelined)
     private final BufferManager bm;
     private final String tempFileId;
@@ -21,19 +26,29 @@ public class Project implements Operator {
     private boolean materialized;
     private Scan tempScan;
 
-    // Pipelined constructor
+    // Pipelined: stream one record at a time, no buffering. Use when the parent
+    // reads this projection exactly once (e.g. the final output to stdout).
     public Project(Operator child,
                    Map<String, Integer> outputSchema) {
-        this(child, outputSchema, null, null);
+        this.child = child;
+        this.outputSchema = outputSchema;
+        this.materialize = false;
+        this.bm = null;
+        this.tempFileId = null;
+        this.materialized = false;
     }
 
-    // Materializing constructor
+    // Materializing: drain child to tempFileId once, then serve via a Scan. Use
+    // when the parent rescans this projection (e.g. a BNL join's inner input).
+    // Java has no named constructors, so the chosen mode is implied by which
+    // overload the call site invokes; `materialize` makes the mode explicit.
     public Project(Operator child,
                    Map<String, Integer> outputSchema,
                    BufferManager bm,
                    String tempFileId) {
         this.child = child;
         this.outputSchema = outputSchema;
+        this.materialize = true;
         this.bm = bm;
         this.tempFileId = tempFileId;
         this.materialized = false;
@@ -41,7 +56,7 @@ public class Project implements Operator {
 
     @Override
     public void open() {
-        if (bm == null) {
+        if (!materialize) {
             child.open();
             return;
         }
@@ -56,7 +71,7 @@ public class Project implements Operator {
 
     @Override
     public GenericRecord next() {
-        if (bm == null) {
+        if (!materialize) {
             GenericRecord rec = child.next();
             if (rec == null) return null;
             return project(rec);
@@ -66,7 +81,7 @@ public class Project implements Operator {
 
     @Override
     public void close() {
-        if (bm == null) {
+        if (!materialize) {
             child.close();
         } else {
             tempScan.close();

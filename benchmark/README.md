@@ -28,7 +28,7 @@ python3 benchmark/run_benchmark.py \
   --repetitions 5 \
   --warmups 1 \
   --buffer-size 20 \
-  --run-label "first run"
+  --run-label "something about the run you want to mention"
 ```
 
 For repeat runs after compiling, skip the Maven build step:

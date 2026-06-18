@@ -18,9 +18,10 @@ public class Scan implements Operator {
     private final Map<String, Integer> schema;
     private final int numPages;
 
+    // Iteration cursor, advanced across next() calls.
     private int currentPage;
     private int currentSlot;
-    private int currentNumRecords;
+    private int currentNumRecords; // record count of currentPage; -1 = header not yet read
 
     public Scan(BufferManager bm, String fileId, Map<String, Integer> schema) {
         this.bm = Objects.requireNonNull(bm, "bm");
@@ -41,17 +42,19 @@ public class Scan implements Operator {
     public void open() {
         currentPage = 0;
         currentSlot = 0;
-        currentNumRecords = -1;
+        currentNumRecords = -1; // -1 to signify unset value
     }
 
     @Override
     public GenericRecord next() {
+        // Loops only to skip empty pages; a page with records returns on the first
+        // iteration.
         while (currentPage < numPages) {
             try {
                 Page page = bm.getPage(fileId, currentPage);
                 GenericPage gp = new GenericPage(page, schema);
 
-                if (currentNumRecords < 0) {
+                if (currentNumRecords == -1) {
                     byte[] raw = gp.getByteArray();
                     currentNumRecords = ByteBuffer.wrap(raw, 0, 4).getInt();
                 }
@@ -60,6 +63,7 @@ public class Scan implements Operator {
                     GenericRecord rec = (GenericRecord) gp.getRecord(currentSlot);
                     currentSlot++;
                     if (currentSlot >= currentNumRecords) {
+                        // Last record on this page; advance cursor to the next page.
                         bm.unpinPage(fileId, currentPage);
                         currentPage++;
                         currentSlot = 0;
@@ -69,6 +73,7 @@ public class Scan implements Operator {
                     }
                     return rec;
                 } else {
+                    // Empty page: advance and loop to try the next one.
                     bm.unpinPage(fileId, currentPage);
                     currentPage++;
                     currentSlot = 0;

@@ -1,7 +1,9 @@
 package storage;
 
 import buffer.BufferManager;
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,6 +62,62 @@ public class BTreeManager implements BTree {
 		bufferManager.unpinPage(fileId, rootId);
 		bufferManager.markDirty(fileId, leafId);
 		bufferManager.unpinPage(fileId, leafId);
+	}
+
+	private BTreeManager(int degree, String fileId, BufferManager bufferManager, int keySize, int rootId) {
+		this.degree = degree;
+		this.fileId = fileId;
+		this.bufferManager = bufferManager;
+		KEY_SIZE = keySize;
+		this.rootId = rootId;
+	}
+
+	/**
+	 * Opens an already-built B+ tree index file.
+	 *
+	 * <p>The current on-disk format does not have a metadata page, so the root is
+	 * found by scanning for the only index page whose parentId is NO_PARENT.
+	 */
+	public static BTreeManager openExisting(
+			int degree,
+			String fileId,
+			BufferManager bufferManager,
+			int keySize) throws IOException {
+		int rootId = findRootPageId(fileId);
+		return new BTreeManager(degree, fileId, bufferManager, keySize, rootId);
+	}
+
+	private static int findRootPageId(String fileId) throws IOException {
+		File file = new File(fileId);
+		long length = file.length();
+		if (length == 0) {
+			throw new IllegalStateException("Index file is empty: " + fileId + ". Run pre_process first.");
+		}
+		if (length % RawPage.MAX_PAGE_LEN != 0) {
+			throw new IllegalStateException("Index file size is not a multiple of pages: " + fileId);
+		}
+
+		int rootId = -1;
+		int pageCount = Math.toIntExact(length / RawPage.MAX_PAGE_LEN);
+		try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+			byte[] header = new byte[12];
+			for (int pageId = 0; pageId < pageCount; pageId++) {
+				raf.seek(RawPage.getOffset(pageId));
+				raf.readFully(header);
+				int parentId = ByteBuffer.wrap(header).getInt(8);
+				if (parentId == InternalPage.NO_PARENT) {
+					if (rootId != -1) {
+						throw new IllegalStateException("Index file has multiple root pages: " + fileId);
+					}
+					rootId = pageId;
+				}
+			}
+		}
+
+		if (rootId == -1) {
+			throw new IllegalStateException("Index file has no root page: " + fileId);
+		}
+		return rootId;
 	}
 
 	// -----------------------------------------------------------------------
