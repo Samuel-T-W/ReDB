@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.locks.ReentrantLock;
 import storage.*;
 
 public class BufferManager {
@@ -18,6 +19,7 @@ public class BufferManager {
 
 	private Map<String, CatalogEntry> catalog;
 	private Map<String, FileState> fileStates = new HashMap<>();
+	private final ReentrantLock fileStatesLock = new ReentrantLock();
 	private Map<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
 	private Queue<Integer> freeFrameIndices;
@@ -95,13 +97,19 @@ public class BufferManager {
 	}
 
 	/** Returns the FileState for the given file, creating it on first use. */
-	private FileState getOrCreateFileState(String fileId) {
-		FileState fileState = fileStates.get(fileId);
-		if (fileState == null) {
-			fileState = new FileState(fileId);
-			fileStates.put(fileId, fileState);
+	// package-private so concurrency tests can exercise the fileStatesLock directly
+	FileState getOrCreateFileState(String fileId) {
+		fileStatesLock.lock();
+		try {
+			FileState fileState = fileStates.get(fileId);
+			if (fileState == null) {
+				fileState = new FileState(fileId);
+				fileStates.put(fileId, fileState);
+			}
+			return fileState;
+		} finally {
+			fileStatesLock.unlock();
 		}
-		return fileState;
 	}
 
 	/**

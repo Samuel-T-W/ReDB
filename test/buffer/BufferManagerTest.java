@@ -7,9 +7,19 @@ import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import storage.*;
@@ -328,6 +338,84 @@ public class BufferManagerTest {
 
 		} catch (Exception e) {
 			e.printStackTrace();
+		}
+	}
+
+	@Test
+	public void testConcurrentAllocateNoDuplicatePageIds() throws Exception {
+		// Goal: FileState.allocatePageId() hands out unique, contiguous ids under
+		// concurrent access — the ReentrantLock must make the read-compute-write atomic.
+		// Without the lock, racing threads read the same nextPageId and collide.
+		File tempFile = File.createTempFile("alloc", ".dat");
+		tempFile.deleteOnExit();
+		// empty file (length 0) → ids start at 0 and are driven entirely by nextPageId
+		FileState fileState = new FileState(tempFile.getAbsolutePath());
+
+		final int threads = 16;
+		final int perThread = 500;
+		final int total = threads * perThread;
+
+		ExecutorService pool = Executors.newFixedThreadPool(threads);
+		CountDownLatch start = new CountDownLatch(1);
+		List<Future<List<Integer>>> futures = new ArrayList<>();
+
+		for (int t = 0; t < threads; t++) {
+			futures.add(pool.submit(() -> {
+				start.await(); // release all threads at once to maximize contention
+				List<Integer> ids = new ArrayList<>(perThread);
+				for (int i = 0; i < perThread; i++) {
+					ids.add(fileState.allocatePageId());
+				}
+				return ids;
+			}));
+		}
+
+		start.countDown();
+		Set<Integer> all = new HashSet<>();
+		for (Future<List<Integer>> f : futures) {
+			all.addAll(f.get());
+		}
+		pool.shutdown();
+
+		// no duplicates, and the union covers a contiguous 0..total-1
+		assertEquals(total, all.size(), "duplicate page ids handed out under concurrency");
+		for (int id = 0; id < total; id++) {
+			assertTrue(all.contains(id), "missing page id " + id);
+		}
+	}
+
+	@Test
+	public void testConcurrentGetOrCreateReturnsSameFileState() throws Exception {
+		// Goal: getOrCreateFileState() returns one shared FileState per file even under
+		// concurrent first-touch — fileStatesLock must make the check-then-put atomic.
+		// Without the lock, two threads can each create a FileState and one is lost.
+		// Looped over fresh managers to widen the (tiny) first-touch race window.
+		final int iterations = 200;
+		final int threads = 8;
+
+		for (int iter = 0; iter < iterations; iter++) {
+			BufferManager manager = new BufferManager(3);
+			String fileId = "concurrentFile" + iter;
+
+			ExecutorService pool = Executors.newFixedThreadPool(threads);
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<FileState>> futures = new ArrayList<>();
+
+			for (int t = 0; t < threads; t++) {
+				futures.add(pool.submit(() -> {
+					start.await();
+					return manager.getOrCreateFileState(fileId);
+				}));
+			}
+
+			start.countDown();
+			Set<FileState> distinct = Collections.newSetFromMap(new IdentityHashMap<>());
+			for (Future<FileState> f : futures) {
+				distinct.add(f.get());
+			}
+			pool.shutdown();
+
+			assertEquals(1, distinct.size(), "iteration " + iter + ": multiple FileState instances created");
 		}
 	}
 

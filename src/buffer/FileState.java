@@ -1,6 +1,7 @@
 package buffer;
 
 import java.io.File;
+import java.util.concurrent.locks.ReentrantLock;
 import storage.RawPage;
 
 /**
@@ -15,6 +16,7 @@ import storage.RawPage;
 class FileState {
 
 	private final String fileId;
+	private final ReentrantLock lock = new ReentrantLock();
 	private int nextPageId;
 
 	FileState(String fileId) {
@@ -28,9 +30,14 @@ class FileState {
 	 * an existing file).
 	 */
 	int allocatePageId() {
-		int pageId = Math.max(diskPageCount(), nextPageId);
-		nextPageId = pageId + 1;
-		return pageId;
+		lock.lock();
+		try {
+			int pageId = Math.max(diskPageCount(), nextPageId);
+			nextPageId = pageId + 1;
+			return pageId;
+		} finally {
+			lock.unlock();
+		}
 	}
 
 	private int diskPageCount() throws ArithmeticException, IllegalStateException {
