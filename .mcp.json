@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "redb-ui-webkit": {
+      "command": "node",
+      "args": ["web/mcp/server.mjs"],
+      "env": {
+        "UI_MCP_BASE": "http://localhost:5180"
+      }
+    }
+  }
+}
