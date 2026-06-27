@@ -24,8 +24,9 @@ AGENTS.md
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
-# Course-distributed data not stored in Git
-data/
+# Course-distributed data not stored in Git (top-level IMDB CSVs only;
+# anchored so it doesn't swallow source dirs like web/src/data/).
+/data/
 
 # School deliverables — design docs and reports (kept locally, not published)
 design-document.md
