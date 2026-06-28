@@ -1,7 +1,9 @@
 package trace;
 
+import org.jspecify.annotations.Nullable;
+
 /** Metadata for one relation participating in the traced run. */
-public record TraceTable(String fileId, int recordSize, Long recordCount) {
+public record TraceTable(String fileId, int recordSize, @Nullable Long recordCount) {
 
     public TraceTable {
         if (fileId == null || fileId.isBlank()) {

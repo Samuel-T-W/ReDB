@@ -1,7 +1,10 @@
 package trace;
 
+import org.jspecify.annotations.Nullable;
+
 /** Extra detail for block nested loop join events. */
-public record TraceJoinDetail(Integer blockId, TraceJoinSide side, String key, Integer matches) {
+public record TraceJoinDetail(
+        @Nullable Integer blockId, @Nullable TraceJoinSide side, @Nullable String key, @Nullable Integer matches) {
 
     public TraceJoinDetail {
         if (blockId != null && blockId < 0) {

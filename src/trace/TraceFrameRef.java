@@ -1,7 +1,10 @@
 package trace;
 
+import org.jspecify.annotations.Nullable;
+
 /** Snapshot of a buffer frame relevant to a buffer event. */
-public record TraceFrameRef(int frameId, Boolean dirty, Integer pinCount, TracePageRef evictedPage) {
+public record TraceFrameRef(
+        int frameId, @Nullable Boolean dirty, @Nullable Integer pinCount, @Nullable TracePageRef evictedPage) {
 
     public TraceFrameRef {
         if (frameId < 0) {
