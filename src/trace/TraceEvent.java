@@ -1,20 +1,21 @@
 package trace;
 
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** One ordered replay event in a query trace. */
 public record TraceEvent(
         long seq,
         long timeMs,
         TraceEventType type,
-        String operatorId,
-        TracePageRef page,
-        TraceFrameRef frame,
-        TraceRecordRef recordId,
-        TraceJoinDetail join,
-        TraceBTreeDetail btree,
-        TraceResultDetail result,
-        String message) {
+        @Nullable String operatorId,
+        @Nullable TracePageRef page,
+        @Nullable TraceFrameRef frame,
+        @Nullable TraceRecordRef recordId,
+        @Nullable TraceJoinDetail join,
+        @Nullable TraceBTreeDetail btree,
+        @Nullable TraceResultDetail result,
+        @Nullable String message) {
 
     public TraceEvent {
         if (seq < 0) {

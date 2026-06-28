@@ -2,13 +2,14 @@ package trace;
 
 import java.util.List;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /** Static query plan node referenced by trace events. */
 public record TracePlanNode(
         String id,
         TracePlanNodeType type,
         String label,
-        String detail,
+        @Nullable String detail,
         List<TracePlanNode> children) {
 
     public TracePlanNode {

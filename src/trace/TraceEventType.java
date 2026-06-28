@@ -1,5 +1,6 @@
 package trace;
 
+import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Arrays;
 
 /** Event names use dotted wire values so generated JSON is frontend-friendly. */
@@ -44,6 +45,7 @@ public enum TraceEventType {
         this.wireName = wireName;
     }
 
+    @JsonValue
     public String wireName() {
         return wireName;
     }
