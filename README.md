@@ -1,5 +1,7 @@
 # ReDB
 
+**[Live demo →](https://samuel-t-w.github.io/ReDB/)**
+
 A relational database storage and query engine built from scratch in Java. ReDB implements the core machinery that sits underneath a real database — paged disk storage, a buffer pool with its own eviction policy, a B+ tree index, and a pull-based query executor with block nested loop joins — without leaning on any existing database libraries.
 
 It's a study in how databases actually work below the SQL layer: every byte on disk, every page in memory, and every record that flows through a query is managed by code in this repo.
