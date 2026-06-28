@@ -19,6 +19,15 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      # Regenerate the web TypeScript trace types from the Java model and fail if
+      # the committed copy is stale (someone changed src/trace/*.java without
+      # running `mvn process-classes`). Kept before "Run tests" so it reports
+      # independently of the test step.
+      - name: Check generated trace types are in sync
+        run: |
+          mvn -q process-classes
+          git diff --exit-code -- web/src/types/trace.ts
+
       - name: Run tests
         run: mvn test
 
