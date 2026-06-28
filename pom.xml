@@ -67,6 +67,48 @@
                     <mainClass>Main</mainClass>
                 </configuration>
             </plugin>
+            <!-- Generates the web showcase's TypeScript trace types from the Java
+                 trace model (src/trace/*.java is the single source of truth). Runs
+                 in process-classes so `mvn compile` keeps web/src/types/trace.ts in
+                 sync; CI fails if the regenerated file differs from the committed copy. -->
+            <plugin>
+                <groupId>cz.habarta.typescript-generator</groupId>
+                <artifactId>typescript-generator-maven-plugin</artifactId>
+                <version>4.1.1</version>
+                <executions>
+                    <execution>
+                        <id>generate-trace-types</id>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                        <phase>process-classes</phase>
+                    </execution>
+                </executions>
+                <configuration>
+                    <jsonLibrary>jackson2</jsonLibrary>
+                    <classPatterns>
+                        <pattern>trace.QueryTrace</pattern>
+                    </classPatterns>
+                    <outputKind>module</outputKind>
+                    <outputFileType>implementationFile</outputFileType>
+                    <outputFile>web/src/types/trace.ts</outputFile>
+                    <mapEnum>asUnion</mapEnum>
+                    <mapMap>asRecord</mapMap>
+                    <!-- Instant serializes to an ISO-8601 string, not a JS Date. -->
+                    <customTypeMappings>
+                        <mapping>java.time.Instant:string</mapping>
+                    </customTypeMappings>
+                    <!-- A field is optional iff its record component is @Nullable;
+                         everything else (primitives, guarded refs, collections) is required. -->
+                    <optionalProperties>useSpecifiedAnnotations</optionalProperties>
+                    <optionalAnnotations>
+                        <annotation>org.jspecify.annotations.Nullable</annotation>
+                    </optionalAnnotations>
+                    <!-- Omit the version/timestamp banner so regenerating is byte-stable
+                         (the CI drift check diffs this file). -->
+                    <noFileComment>true</noFileComment>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

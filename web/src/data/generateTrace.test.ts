@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { generateTrace, type TraceParams } from "./generateTrace";
 import { replay } from "./replay";
-import { CURRENT_SCHEMA_VERSION, type TraceEventType } from "../types/trace";
+import { type TraceEventType } from "../types/trace";
+import { CURRENT_SCHEMA_VERSION } from "../types/traceSchema";
 
 const INDEXED: TraceParams = { start: "M", end: "Mz", bufferSize: 5, indexed: true };
 const SCAN: TraceParams = { start: "M", end: "Mz", bufferSize: 5, indexed: false };
