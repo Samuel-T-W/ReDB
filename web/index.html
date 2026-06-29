@@ -8,6 +8,19 @@
       name="description"
       content="ReDB is a page-based database storage engine with buffer management, B+ tree indexing, and query execution. Watch a query run."
     />
+    <script>
+      // Set the theme before first paint to avoid a flash of the wrong palette.
+      // Light is the default; a saved choice from the toggle always wins.
+      (function () {
+        try {
+          var saved = localStorage.getItem("redb-theme");
+          var theme = saved === "light" || saved === "dark" ? saved : "light";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -3,39 +3,28 @@ import { ITERATIONS } from "../data/iterations";
 
 export default function IterationSlider({ currentId }: { currentId: number }) {
   const navigate = useNavigate();
-  const min = ITERATIONS[0].id;
-  const max = ITERATIONS[ITERATIONS.length - 1].id;
-  const range = max - min;
 
   return (
-    <div className="iter-slider">
-      <div className="iter-slider-rail">
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={1}
-          value={currentId}
-          onChange={(e) => navigate(`/iteration/${e.target.value}`)}
-          aria-label="Select iteration"
-        />
-      </div>
-      <div className="iter-ticks">
-        {ITERATIONS.map((it) => (
+    <div className="iter-steps" role="tablist" aria-label="Select iteration">
+      {ITERATIONS.map((it) => {
+        const active = it.id === currentId;
+        return (
           <button
             key={it.id}
-            className={`iter-tick${it.id === currentId ? " active" : ""}`}
+            role="tab"
+            aria-selected={active}
+            className={`iter-step${active ? " active" : ""} ${it.status}`}
             onClick={() => navigate(`/iteration/${it.id}`)}
-            style={{
-              left: `${range === 0 ? 0 : ((it.id - min) / range) * 100}%`,
-            }}
           >
-            <span className="tv">{it.version}</span>
-            <span className="tn">{it.name}</span>
-            {it.status === "planned" && <span className="tplanned">planned</span>}
+            <span className="step-dot" />
+            <span className="step-meta">
+              <span className="step-ver">{it.version}</span>
+              <span className="step-name">{it.name}</span>
+              {it.status === "planned" && <span className="step-planned">planned</span>}
+            </span>
           </button>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }

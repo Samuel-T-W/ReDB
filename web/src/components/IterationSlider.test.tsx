@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import IterationSlider from "./IterationSlider";
+import { ITERATIONS } from "../data/iterations";
 
 describe("IterationSlider", () => {
-  it("positions iteration ticks to match the slider stops", () => {
+  it("renders a discrete step per iteration with the current one selected", () => {
     render(
       <MemoryRouter>
         <IterationSlider currentId={1} />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("slider", { name: "Select iteration" })).toHaveValue("1");
-    expect(screen.getByRole("button", { name: /v1/i })).toHaveStyle({ left: "0%" });
-    expect(screen.getByRole("button", { name: /v2/i })).toHaveStyle({ left: "50%" });
-    expect(screen.getByRole("button", { name: /v3/i })).toHaveStyle({ left: "100%" });
+    expect(screen.getAllByRole("tab")).toHaveLength(ITERATIONS.length);
+    expect(screen.getByRole("tab", { name: /v1/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /v2/i })).toHaveAttribute("aria-selected", "false");
   });
 });

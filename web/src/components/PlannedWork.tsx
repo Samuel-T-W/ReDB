@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ITERATIONS, LATEST_IMPLEMENTED } from "../data/iterations";
+import ThemeToggle from "./ThemeToggle";
 
 export default function PlannedWork() {
   return (
@@ -8,9 +9,12 @@ export default function PlannedWork() {
         <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="brand">
           ReDB
         </Link>
-        <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="topbar-link">
-          ← Back to demo
-        </Link>
+        <div className="topbar-right">
+          <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="topbar-link">
+            ← Back to demo
+          </Link>
+          <ThemeToggle />
+        </div>
       </nav>
 
       <header className="iter-header">
