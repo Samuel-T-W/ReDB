@@ -658,10 +658,10 @@ footer {
 }
 .brand {
   font-family: var(--mono);
-  font-weight: 700;
-  font-size: 18px;
+  font-weight: 800;
+  font-size: 20px;
   color: var(--text);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
 }
 .brand:hover {
   text-decoration: none;
@@ -743,11 +743,14 @@ footer {
 }
 .iter-tick .tv {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
   color: var(--muted);
 }
 .iter-tick .tn {
-  font-size: 10px;
+  font-size: 10.5px;
+  line-height: 1.15;
   color: var(--faint);
   white-space: nowrap;
 }
