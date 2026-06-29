@@ -84,6 +84,7 @@ public class End2EndTest {
 		 * Check basic create/load/read data to page Load rows from csv file, insert
 		 * into page until full, then create new page and repeat Test on 400 rows
 		 */
+		assumeMoviesData(MOVIES_TSV);
 		System.out.println("START TEST LOAD MOVIES FROM TSV");
 		Page page;
 		try {
@@ -178,6 +179,7 @@ public class End2EndTest {
 		 * until full, then create another page. Assert that only new page can be
 		 * insertted with more rows.
 		 */
+		assumeMoviesData(MOVIES_TSV);
 		Page page;
 		GenericPage genericPage;
 		try {
@@ -313,6 +315,7 @@ public class End2EndTest {
 		//
 		// Pseudocode:
 		// every N inserts -> getPage(randomPid) -> basic sanity check
+		assumeMoviesData(MOVIES_TSV);
 		Page page = null;
 		try {
 			page = bm.createPage(MOVIES_DB, null);
@@ -404,6 +407,7 @@ public class End2EndTest {
 		//
 		// Pseudocode:
 		// run load with (100 inserts : 1 read) and (10:1)
+		assumeMoviesData(MOVIES_TSV);
 		Page page = null;
 		int slotId = 0;
 		int numRow = 0;
@@ -492,6 +496,7 @@ public class End2EndTest {
 	@Test
 	public void testChangingInsertReadFrequencies() {
 		// Test changin insert-load frequency mid way
+		assumeMoviesData(MOVIES_TSV);
 		Page page = null;
 		try {
 			page = bm.createPage(MOVIES_DB, null);
@@ -685,6 +690,7 @@ public class End2EndTest {
 		 * store them when first read => Then getPage, get content, and cofirm that the
 		 * content is the same as stored rows
 		 */
+		assumeMoviesData(MOVIES_TSV);
 		int slotId = 0;
 		int numRow = 0;
 		int numPage = 0;

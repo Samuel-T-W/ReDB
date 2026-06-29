@@ -117,6 +117,7 @@ public class BTreeBuildMovieIDTest {
 	 */
 	@Test
 	public void testBuildMovieIDIndex() throws Exception {
+		assumeMoviesData(MOVIES_TSV);
 		// ----------------------------------------------------------------
 		// Phase 1: Load the Movies table from CSV into movies.db
 		// ----------------------------------------------------------------
@@ -209,6 +210,7 @@ public class BTreeBuildMovieIDTest {
 
 	@Test
 	public void testBulkLoading() throws Exception {
+		assumeMoviesData(MOVIES_TSV);
 		// --- 1. Load movies into data pages ---
 		List<K> allMovieID = new ArrayList<>();
 		List<RecordId> allRids = new ArrayList<>();

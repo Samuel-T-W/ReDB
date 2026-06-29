@@ -132,6 +132,7 @@ public class PinnedMovieIDRangeQueryPerformanceTest {
 
 	@Test
 	public void testRangeQueryPerformance() throws Exception {
+		assumeMoviesData(MOVIES_TSV);
 
 		// --- 1. Create fresh DB files ---
 		for (String fname : new String[]{MOVIES_DB, MOVIES_IDX}) {
