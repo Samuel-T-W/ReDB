@@ -108,24 +108,48 @@ export default function IterationPage() {
               onClose={() => setReveal("none")}
             >
               <p className="perf-blurb">{iteration.performance.blurb}</p>
+              <p className="perf-headline">{iteration.performance.headline}</p>
+              <div className="perf-highlights">
+                {iteration.performance.highlights.map((item) => (
+                  <div className="perf-highlight" key={item.label}>
+                    <div className={`perf-highlight-value ${item.tone ?? "accent"}`}>{item.value}</div>
+                    <div className="perf-highlight-label">{item.label}</div>
+                  </div>
+                ))}
+              </div>
               <table className="perf-table">
                 <thead>
                   <tr>
-                    <th>metric</th>
-                    <th>scan</th>
-                    <th>index</th>
+                    <th>concurrency</th>
+                    <th>throughput</th>
+                    <th>mean latency</th>
+                    <th>peak rss</th>
                   </tr>
                 </thead>
                 <tbody>
                   {iteration.performance.rows.map((r) => (
-                    <tr key={r.label}>
-                      <td>{r.label}</td>
-                      <td>{r.scan}</td>
-                      <td className="perf-win">{r.index}</td>
+                    <tr key={r.concurrency}>
+                      <td>{r.concurrency}</td>
+                      <td>{r.throughput}</td>
+                      <td>{r.latency}</td>
+                      <td>{r.rss}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <ul className="perf-takeaways">
+                {iteration.performance.takeaways.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <a
+                className="btn perf-link"
+                href={iteration.performance.analysisHref}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {iteration.performance.analysisLabel} ↗
+              </a>
               <p className="note">{iteration.performance.note}</p>
             </SidePanel>
           )}
