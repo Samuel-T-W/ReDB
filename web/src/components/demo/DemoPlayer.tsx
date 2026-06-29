@@ -79,7 +79,7 @@ export default function DemoPlayer() {
           <PlanTree plan={trace.plan} activeId={state.activeOperatorId} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <StatsPanel running={state.running} trace={trace} />
+          <StatsPanel running={state.running} trace={trace} started={cursor > 0 || playing} />
           <BufferPool
             frames={state.frames}
             touchedFrameId={state.touchedFrameId}

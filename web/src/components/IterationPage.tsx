@@ -4,6 +4,7 @@ import { getIteration, LATEST_IMPLEMENTED } from "../data/iterations";
 import IterationSlider from "./IterationSlider";
 import DemoPlayer from "./demo/DemoPlayer";
 import SidePanel from "./SidePanel";
+import ThemeToggle from "./ThemeToggle";
 
 type Reveal = "none" | "explain" | "perf";
 
@@ -27,9 +28,12 @@ export default function IterationPage() {
           ReDB
         </Link>
         <IterationSlider currentId={iteration.id} />
-        <Link to="/planned" className="topbar-link">
-          Planned work →
-        </Link>
+        <div className="topbar-right">
+          <Link to="/planned" className="topbar-link">
+            Planned work →
+          </Link>
+          <ThemeToggle />
+        </div>
       </nav>
 
       <header className="iter-header">
@@ -41,7 +45,7 @@ export default function IterationPage() {
         <p className="iter-tagline">{iteration.tagline}</p>
         <div className="iter-actions">
           <button
-            className={`btn action-btn${reveal === "explain" ? " active" : ""}`}
+            className={`btn primary action-btn${reveal === "explain" ? " active" : ""}`}
             onClick={() => toggle("explain")}
           >
             How it works
