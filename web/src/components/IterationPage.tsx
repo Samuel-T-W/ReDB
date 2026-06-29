@@ -120,10 +120,10 @@ export default function IterationPage() {
               <table className="perf-table">
                 <thead>
                   <tr>
-                    <th>concurrency</th>
+                    <th>workers</th>
                     <th>throughput</th>
                     <th>mean latency</th>
-                    <th>peak rss</th>
+                    <th>peak memory</th>
                   </tr>
                 </thead>
                 <tbody>

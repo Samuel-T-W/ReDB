@@ -70,14 +70,14 @@ export const ITERATIONS: Iteration[] = [
     ],
     performance: {
       blurb:
-        "Notebook-backed benchmark summary from the latest committed concurrency run: 45 measured queries, 0 failures, buffer size 20, no index, on an 8-core host with 15.7 GB RAM.",
+        "How this was measured: each worker is a separate ReDB process running the same query - the directors of movies whose title falls in a given range - over ~1.3M IMDB titles. ReDB is single-threaded, so concurrency here means spinning up several of those processes at once: first 1, then 2, then 4, all competing for one 8-core, 15.7 GB machine. At each level every title range runs five times over, and the figures below are the averages across those repetitions. Buffer size 20, no index.",
       headline:
-        "Concurrency improves total throughput, but each query gets slower as independent JVMs compete for CPU, memory, and storage on the same machine.",
+        "Running more processes in parallel raises total throughput, but each individual query gets slower as the independent JVMs fight over CPU, memory, and storage on the same machine.",
       highlights: [
-        { label: "Throughput at c4", value: "0.348 qps", tone: "accent" },
-        { label: "Speedup vs c1", value: "2.98x", tone: "green" },
-        { label: "Mean latency at c4", value: "10,322 ms", tone: "amber" },
-        { label: "Peak RSS at c4", value: "2,011 MB", tone: "accent" },
+        { label: "Throughput at 4 workers", value: "0.348 qps", tone: "accent" },
+        { label: "Speedup vs 1 worker", value: "2.98x", tone: "green" },
+        { label: "Mean latency at 4 workers", value: "10,322 ms", tone: "amber" },
+        { label: "Peak memory at 4 workers", value: "2,011 MB", tone: "accent" },
       ],
       rows: [
         { concurrency: "1", throughput: "0.117 qps", latency: "8,480 ms", rss: "544 MB" },
@@ -85,9 +85,9 @@ export const ITERATIONS: Iteration[] = [
         { concurrency: "4", throughput: "0.348 qps", latency: "10,322 ms", rss: "2,011 MB" },
       ],
       takeaways: [
-        "Throughput climbs to roughly 3.0x at concurrency 4, but that falls short of ideal 4.0x scaling because the JVMs share one machine.",
-        "Latency rises 21.7% from concurrency 1 to 4, which is expected here because each worker is still single-threaded.",
-        "The slowest workload in this run is medium_t_range at 13,714 ms mean query time under concurrency 4.",
+        "At 4 workers throughput reaches roughly 3.0x a single worker, short of the ideal 4.0x because the four JVMs share one machine.",
+        "Mean latency rises 21.7% going from 1 worker to 4, which is expected here since each worker is still single-threaded.",
+        "The heaviest title range, medium_t_range, averages 13,714 ms per query at 4 workers - the largest result set in this run.",
       ],
       note: "Source: benchmark/benchmark_analysis.ipynb in this repo. The notebook also records host memory headroom and shows swap staying at 0 MB during the latest run.",
       analysisHref:
