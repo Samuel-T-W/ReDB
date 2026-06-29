@@ -7,16 +7,28 @@ export interface ExplanationSection {
   body: string;
 }
 
-export interface PerfRow {
+export interface PerfHighlight {
   label: string;
-  scan: string;
-  index: string;
+  value: string;
+  tone?: "accent" | "green" | "amber";
+}
+
+export interface PerfRow {
+  concurrency: string;
+  throughput: string;
+  latency: string;
+  rss: string;
 }
 
 export interface PerfData {
   blurb: string;
+  headline: string;
+  highlights: PerfHighlight[];
   rows: PerfRow[];
+  takeaways: string[];
   note: string;
+  analysisHref: string;
+  analysisLabel: string;
 }
 
 export interface Iteration {
@@ -58,14 +70,29 @@ export const ITERATIONS: Iteration[] = [
     ],
     performance: {
       blurb:
-        "Range query over ~1.3M IMDB title rows: directors of movies whose title falls in a range. Full sequential scan vs. B+ tree range access, buffer pool = 8 frames.",
-      rows: [
-        { label: "Pages read from disk", scan: "1,041", index: "37" },
-        { label: "Query latency (warm)", scan: "612 ms", index: "41 ms" },
-        { label: "Buffer hit rate", scan: "18%", index: "73%" },
-        { label: "Records examined", scan: "1.3M", index: "12" },
+        "Notebook-backed benchmark summary from the latest committed concurrency run: 45 measured queries, 0 failures, buffer size 20, no index, on an 8-core host with 15.7 GB RAM.",
+      headline:
+        "Concurrency improves total throughput, but each query gets slower as independent JVMs compete for CPU, memory, and storage on the same machine.",
+      highlights: [
+        { label: "Throughput at c4", value: "0.348 qps", tone: "accent" },
+        { label: "Speedup vs c1", value: "2.98x", tone: "green" },
+        { label: "Mean latency at c4", value: "10,322 ms", tone: "amber" },
+        { label: "Peak RSS at c4", value: "2,011 MB", tone: "accent" },
       ],
-      note: "Representative numbers for this iteration. Live engine benchmarks replace these once the trace pipeline lands.",
+      rows: [
+        { concurrency: "1", throughput: "0.117 qps", latency: "8,480 ms", rss: "544 MB" },
+        { concurrency: "2", throughput: "0.209 qps", latency: "9,071 ms", rss: "998 MB" },
+        { concurrency: "4", throughput: "0.348 qps", latency: "10,322 ms", rss: "2,011 MB" },
+      ],
+      takeaways: [
+        "Throughput climbs to roughly 3.0x at concurrency 4, but that falls short of ideal 4.0x scaling because the JVMs share one machine.",
+        "Latency rises 21.7% from concurrency 1 to 4, which is expected here because each worker is still single-threaded.",
+        "The slowest workload in this run is medium_t_range at 13,714 ms mean query time under concurrency 4.",
+      ],
+      note: "Source: benchmark/benchmark_analysis.ipynb in this repo. The notebook also records host memory headroom and shows swap staying at 0 MB during the latest run.",
+      analysisHref:
+        "https://github.com/Samuel-T-W/ReDB/blob/main/benchmark/benchmark_analysis.ipynb",
+      analysisLabel: "Open benchmark analysis notebook",
     },
   },
   {
