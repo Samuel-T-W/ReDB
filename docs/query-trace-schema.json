@@ -1,0 +1,537 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redb.local/schemas/query-trace.schema.json",
+  "title": "ReDB Query Trace",
+  "description": "Readable JSON contract for one static ReDB query replay artifact. The Java records in src/trace are the code model; this file documents the intended JSON shape for frontend traces.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "run",
+    "summary",
+    "plan",
+    "tables",
+    "events"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "plan": {
+      "$ref": "#/$defs/planNode"
+    },
+    "tables": {
+      "type": "object",
+      "description": "Relation metadata keyed by logical table name, for example Movies, WorkedOn, People.",
+      "additionalProperties": {
+        "$ref": "#/$defs/table"
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "Ordered replay log. seq is authoritative for ordering; timeMs is for animation pacing.",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "command",
+        "startedAt",
+        "range",
+        "bufferSize",
+        "indexed",
+        "wallClockMs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable name for this preset run."
+        },
+        "command": {
+          "type": "string",
+          "const": "run_query"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "bufferSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "indexed": {
+          "type": "boolean",
+          "description": "True when Movies title filtering used the B+ tree index."
+        },
+        "wallClockMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pagesRead",
+        "bufferHits",
+        "bufferMisses",
+        "evictions",
+        "recordsExamined",
+        "recordsEmitted",
+        "operatorNextCalls",
+        "btreeNodeVisits"
+      ],
+      "properties": {
+        "pagesRead": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bufferHits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bufferMisses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evictions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recordsExamined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recordsEmitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operatorNextCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "btreeNodeVisits": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "planNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable operator id referenced by events."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "PROJECT",
+            "BNL_JOIN",
+            "SELECTION",
+            "SCAN",
+            "INDEX_SCAN",
+            "MATERIALIZE"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/planNode"
+          }
+        }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileId",
+        "recordSize"
+      ],
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recordSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recordCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timeMs",
+        "type"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "$ref": "#/$defs/eventType"
+        },
+        "operatorId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "page": {
+          "$ref": "#/$defs/nullablePageRef"
+        },
+        "frame": {
+          "$ref": "#/$defs/nullableFrameRef"
+        },
+        "recordId": {
+          "$ref": "#/$defs/nullableRecordRef"
+        },
+        "join": {
+          "$ref": "#/$defs/nullableJoinDetail"
+        },
+        "btree": {
+          "$ref": "#/$defs/nullableBTreeDetail"
+        },
+        "result": {
+          "$ref": "#/$defs/nullableResultDetail"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "eventType": {
+      "type": "string",
+      "description": "Dotted names match TraceEventType.wireName().",
+      "enum": [
+        "operator.open",
+        "operator.next",
+        "operator.emit",
+        "operator.close",
+        "buffer.hit",
+        "buffer.miss",
+        "buffer.page_load",
+        "buffer.evict",
+        "buffer.pin",
+        "buffer.unpin",
+        "buffer.flush",
+        "scan.page_begin",
+        "scan.page_end",
+        "filter.pass",
+        "filter.reject",
+        "bnl.block_begin",
+        "bnl.block_end",
+        "bnl.hash_build",
+        "bnl.probe",
+        "bnl.match",
+        "btree.search_begin",
+        "btree.node_visit",
+        "btree.range_leaf_begin",
+        "btree.range_emit",
+        "btree.search_end",
+        "query.result",
+        "query.complete"
+      ]
+    },
+    "nullablePageRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/pageRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileId",
+        "pageId"
+      ],
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pageId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "nullableFrameRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/frameRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "frameRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frameId"
+      ],
+      "properties": {
+        "frameId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "pinCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evictedPage": {
+          "$ref": "#/$defs/nullablePageRef"
+        }
+      }
+    },
+    "nullableRecordRef": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/recordRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recordRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId",
+        "slotId"
+      ],
+      "properties": {
+        "pageId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slotId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "nullableJoinDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/joinDetail"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "joinDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blockId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "side": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "LEFT",
+            "RIGHT",
+            null
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "matches": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "nullableBTreeDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/btreeDetail"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "btreeDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "indexFileId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodePageId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "nodeType": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "INTERNAL",
+            "LEAF",
+            null
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rangeStart": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rangeEnd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "nullableResultDetail": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/resultDetail"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resultDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ordinal",
+        "fields"
+      ],
+      "properties": {
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
