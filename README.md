@@ -74,6 +74,11 @@ mvn test -Dtest=BTreeUnitTest           # B+ tree unit tests
 mvn test -Dtest=End2EndTest             # integration test (loads CSV data)
 ```
 
+The test suite bootstraps deterministic `data/title.csv`, `data/workedon.csv`,
+and `data/name.csv` fixtures at test time, along with a writable `report/`
+directory for performance outputs. You do not need to preload course data to
+run `mvn test` locally.
+
 ## Using the engine
 
 ### Pre-process (load tables, optionally build the index)
