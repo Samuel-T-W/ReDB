@@ -80,7 +80,8 @@ public class BufferManager {
 			Frame frame = this.bufferPool[pageTable.get(pageKey)];
 			frame.pinCount++;
 			if (traceListener != null) {
-				traceListener.onBufferHit(fileId, pageId, frame.frameIndex, frame.isDirty, frame.pinCount);
+				traceListener.onBufferHit(
+						fileId, pageId, frame.frameIndex, frame.isDirty, frame.pinCount, frame.page.getByteArray());
 			}
 			return frame.page;
 		}
@@ -283,7 +284,13 @@ public class BufferManager {
 		// add page to page table and automatically moves it to the bottom of the lru
 		pageTable.put(pageKey, freeFrameIndex);
 		if (traceListener != null) {
-			traceListener.onPageLoad(pageKey.fileId(), pageKey.pageId(), frame.frameIndex, frame.isDirty, frame.pinCount);
+			traceListener.onPageLoad(
+					pageKey.fileId(),
+					pageKey.pageId(),
+					frame.frameIndex,
+					frame.isDirty,
+					frame.pinCount,
+					frame.page.getByteArray());
 		}
 
 		return page;

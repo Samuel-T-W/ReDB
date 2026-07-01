@@ -1,6 +1,7 @@
 package trace;
 
 import buffer.BufferTraceListener;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -137,7 +138,8 @@ public final class QueryTraceRecorder implements BufferTraceListener {
     }
 
     @Override
-    public void onBufferHit(String fileId, int pageId, int frameId, boolean dirty, int pinCount) {
+    public void onBufferHit(
+            String fileId, int pageId, int frameId, boolean dirty, int pinCount, byte[] pageData) {
         bufferHits++;
         emit(new TraceEvent(
                 seq,
@@ -151,7 +153,7 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 null,
                 null,
                 null));
-        emitIndexVisitIfNeeded(fileId, pageId);
+        emitIndexVisitIfNeeded(fileId, pageId, pageData);
     }
 
     @Override
@@ -173,7 +175,8 @@ public final class QueryTraceRecorder implements BufferTraceListener {
     }
 
     @Override
-    public void onPageLoad(String fileId, int pageId, int frameId, boolean dirty, int pinCount) {
+    public void onPageLoad(
+            String fileId, int pageId, int frameId, boolean dirty, int pinCount, byte[] pageData) {
         emit(new TraceEvent(
                 seq,
                 seq,
@@ -186,7 +189,7 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 null,
                 null,
                 null));
-        emitIndexVisitIfNeeded(fileId, pageId);
+        emitIndexVisitIfNeeded(fileId, pageId, pageData);
     }
 
     @Override
@@ -222,12 +225,13 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 null));
     }
 
-    private void emitIndexVisitIfNeeded(String fileId, int pageId) {
+    private void emitIndexVisitIfNeeded(String fileId, int pageId, byte[] pageData) {
         if (!fileId.endsWith(".idx")) {
             return;
         }
         btreeNodeVisits++;
-        TraceBTreeNodeType nodeType = pageId == 0 ? TraceBTreeNodeType.INTERNAL : TraceBTreeNodeType.LEAF;
+        boolean isLeaf = ByteBuffer.wrap(pageData).getInt(0) == 1;
+        TraceBTreeNodeType nodeType = isLeaf ? TraceBTreeNodeType.LEAF : TraceBTreeNodeType.INTERNAL;
         emit(new TraceEvent(
                 seq,
                 seq,
