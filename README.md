@@ -74,6 +74,11 @@ mvn test -Dtest=BTreeUnitTest           # B+ tree unit tests
 mvn test -Dtest=End2EndTest             # integration test (loads CSV data)
 ```
 
+Several tests read `data/title.csv`, `data/workedon.csv`, and `data/name.csv` (see
+*Data* below). CI fetches these automatically from the `test-fixtures-v1` GitHub
+Release before running `mvn test`; for a local run, place your own copies in
+`data/` first.
+
 ## Using the engine
 
 ### Pre-process (load tables, optionally build the index)
