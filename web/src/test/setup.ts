@@ -10,6 +10,8 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = vi.fn();
 }
 
+vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+
 afterEach(() => {
   cleanup();
 });

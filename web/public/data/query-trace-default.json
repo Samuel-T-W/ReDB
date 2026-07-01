@@ -1,0 +1,622 @@
+{
+  "schemaVersion" : 1,
+  "run" : {
+    "id" : "85f6ce7e-8460-4117-b197-f60e5947dc80",
+    "command" : "run_query",
+    "startedAt" : "2026-06-29T02:02:31.617438Z",
+    "range" : {
+      "start" : "M",
+      "end" : "Mz"
+    },
+    "bufferSize" : 5,
+    "indexed" : true,
+    "wallClockMs" : 3
+  },
+  "summary" : {
+    "pagesRead" : 5,
+    "bufferHits" : 15,
+    "bufferMisses" : 5,
+    "evictions" : 3,
+    "recordsExamined" : 4,
+    "recordsEmitted" : 3,
+    "operatorNextCalls" : 4,
+    "btreeNodeVisits" : 3
+  },
+  "plan" : {
+    "id" : "project",
+    "type" : "PROJECT",
+    "label" : "Project: title, name",
+    "children" : [ {
+      "id" : "join-wo-people",
+      "type" : "BNL_JOIN",
+      "label" : "BNL Join: WorkedOn.personId = People.personId",
+      "children" : [ {
+        "id" : "join-movies-wo",
+        "type" : "BNL_JOIN",
+        "label" : "BNL Join: Movies.movieId = WorkedOn.movieId",
+        "children" : [ {
+          "id" : "movies-index",
+          "type" : "INDEX_SCAN",
+          "label" : "Index Scan: Movies",
+          "detail" : "B+ tree range on title",
+          "children" : [ ]
+        }, {
+          "id" : "wo-pi",
+          "type" : "MATERIALIZE",
+          "label" : "Project: movieId, personId",
+          "detail" : "materialized temp file",
+          "children" : [ {
+            "id" : "wo-sigma",
+            "type" : "SELECTION",
+            "label" : "Selection: category = director",
+            "children" : [ {
+              "id" : "wo-scan",
+              "type" : "SCAN",
+              "label" : "Scan: WorkedOn",
+              "detail" : "workedon.db",
+              "children" : [ ]
+            } ]
+          } ]
+        } ]
+      }, {
+        "id" : "people-scan",
+        "type" : "SCAN",
+        "label" : "Scan: People",
+        "detail" : "people.db",
+        "children" : [ ]
+      } ]
+    } ]
+  },
+  "tables" : {
+    "title.idx" : {
+      "fileId" : "title.idx",
+      "recordSize" : 30
+    },
+    "movies.db" : {
+      "fileId" : "movies.db",
+      "recordSize" : 39,
+      "recordCount" : 5
+    },
+    "workedon.db" : {
+      "fileId" : "workedon.db",
+      "recordSize" : 39,
+      "recordCount" : 5
+    },
+    "people.db" : {
+      "fileId" : "people.db",
+      "recordSize" : 115,
+      "recordCount" : 5
+    }
+  },
+  "events" : [ {
+    "seq" : 0,
+    "timeMs" : 0,
+    "type" : "operator.open",
+    "operatorId" : "project",
+    "message" : "open query plan"
+  }, {
+    "seq" : 1,
+    "timeMs" : 1,
+    "type" : "btree.search_begin",
+    "operatorId" : "movies-index",
+    "btree" : {
+      "indexFileId" : "title.idx",
+      "rangeStart" : "M",
+      "rangeEnd" : "Mz"
+    }
+  }, {
+    "seq" : 2,
+    "timeMs" : 2,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 3,
+    "timeMs" : 3,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 0,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 4,
+    "timeMs" : 4,
+    "type" : "btree.node_visit",
+    "operatorId" : "movies-index",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 0
+    },
+    "btree" : {
+      "indexFileId" : "title.idx",
+      "nodePageId" : 0,
+      "nodeType" : "INTERNAL"
+    }
+  }, {
+    "seq" : 5,
+    "timeMs" : 5,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 1
+    }
+  }, {
+    "seq" : 6,
+    "timeMs" : 6,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 1
+    },
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 7,
+    "timeMs" : 7,
+    "type" : "btree.node_visit",
+    "operatorId" : "movies-index",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 1
+    },
+    "btree" : {
+      "indexFileId" : "title.idx",
+      "nodePageId" : 1,
+      "nodeType" : "LEAF"
+    }
+  }, {
+    "seq" : 8,
+    "timeMs" : 8,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 1
+    },
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 9,
+    "timeMs" : 9,
+    "type" : "btree.node_visit",
+    "operatorId" : "movies-index",
+    "page" : {
+      "fileId" : "title.idx",
+      "pageId" : 1
+    },
+    "btree" : {
+      "indexFileId" : "title.idx",
+      "nodePageId" : 1,
+      "nodeType" : "LEAF"
+    }
+  }, {
+    "seq" : 10,
+    "timeMs" : 10,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 11,
+    "timeMs" : 11,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 12,
+    "timeMs" : 12,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 13,
+    "timeMs" : 13,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 14,
+    "timeMs" : 14,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 15,
+    "timeMs" : 15,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 16,
+    "timeMs" : 16,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 17,
+    "timeMs" : 17,
+    "type" : "buffer.flush",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 18,
+    "timeMs" : 18,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 19,
+    "timeMs" : 19,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 20,
+    "timeMs" : 20,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 0,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "title.idx",
+        "pageId" : 0
+      }
+    }
+  }, {
+    "seq" : 21,
+    "timeMs" : 21,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-bnl-outer-0",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 0,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 22,
+    "timeMs" : 22,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 23,
+    "timeMs" : 23,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 24,
+    "timeMs" : 24,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 25,
+    "timeMs" : 25,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 26,
+    "timeMs" : 26,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "title.idx",
+        "pageId" : 1
+      }
+    }
+  }, {
+    "seq" : 27,
+    "timeMs" : 27,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-bnl-outer-1",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 28,
+    "timeMs" : 28,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 29,
+    "timeMs" : 29,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 30,
+    "timeMs" : 30,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 31,
+    "timeMs" : 31,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "workedon.db",
+        "pageId" : 0
+      }
+    }
+  }, {
+    "seq" : 32,
+    "timeMs" : 32,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 33,
+    "timeMs" : 33,
+    "type" : "btree.search_end",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 34,
+    "timeMs" : 34,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 35,
+    "timeMs" : 35,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 36,
+    "timeMs" : 36,
+    "type" : "operator.emit",
+    "operatorId" : "project"
+  }, {
+    "seq" : 37,
+    "timeMs" : 37,
+    "type" : "query.result",
+    "operatorId" : "project",
+    "result" : {
+      "ordinal" : 0,
+      "fields" : {
+        "title" : "Moonrise",
+        "name" : "Mira Stone"
+      }
+    }
+  }, {
+    "seq" : 38,
+    "timeMs" : 38,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 39,
+    "timeMs" : 39,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 40,
+    "timeMs" : 40,
+    "type" : "operator.emit",
+    "operatorId" : "project"
+  }, {
+    "seq" : 41,
+    "timeMs" : 41,
+    "type" : "query.result",
+    "operatorId" : "project",
+    "result" : {
+      "ordinal" : 1,
+      "fields" : {
+        "title" : "Mosaic",
+        "name" : "Noah Vale"
+      }
+    }
+  }, {
+    "seq" : 42,
+    "timeMs" : 42,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 43,
+    "timeMs" : 43,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 44,
+    "timeMs" : 44,
+    "type" : "operator.emit",
+    "operatorId" : "project"
+  }, {
+    "seq" : 45,
+    "timeMs" : 45,
+    "type" : "query.result",
+    "operatorId" : "project",
+    "result" : {
+      "ordinal" : 2,
+      "fields" : {
+        "title" : "Murmur",
+        "name" : "Oren Pike"
+      }
+    }
+  }, {
+    "seq" : 46,
+    "timeMs" : 46,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 47,
+    "timeMs" : 47,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 48,
+    "timeMs" : 48,
+    "type" : "operator.close",
+    "operatorId" : "project"
+  }, {
+    "seq" : 49,
+    "timeMs" : 49,
+    "type" : "query.complete",
+    "message" : "3 rows"
+  } ]
+}

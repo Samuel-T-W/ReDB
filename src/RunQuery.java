@@ -2,7 +2,10 @@ import buffer.BufferManager;
 import catalog.IndexEntry;
 import catalog.TableEntry;
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +25,12 @@ import operators.Selection;
 import storage.BTreeManager;
 import storage.GenericRecord;
 import storage.K;
+import storage.RawPage;
+import trace.QueryTrace;
+import trace.QueryTraceRecorder;
+import trace.TracePlanNode;
+import trace.TracePlanNodeType;
+import trace.TraceTable;
 import util.RecordUtils;
 
 public class RunQuery {
@@ -60,6 +69,31 @@ public class RunQuery {
             String endRange,
             int bufferSize,
             boolean useIndex) throws IOException {
+        return execute(startRange, endRange, bufferSize, useIndex, null).resultCount();
+    }
+
+    public static QueryTrace capture(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex) throws IOException {
+        QueryTraceRecorder recorder = new QueryTraceRecorder(
+                UUID.randomUUID().toString(),
+                startRange,
+                endRange,
+                bufferSize,
+                useIndex,
+                buildPlan(useIndex),
+                buildTraceTables());
+        return execute(startRange, endRange, bufferSize, useIndex, recorder).trace();
+    }
+
+    private static RunResult execute(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex,
+            QueryTraceRecorder recorder) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
         int N = (bufferSize - 1) / 2;
         if (N < 1) {
@@ -68,6 +102,9 @@ public class RunQuery {
 
         QueryContext query = QueryContext.create();
         BufferManager bm = new BufferManager(bufferSize);
+        if (recorder != null) {
+            bm.setTraceListener(recorder);
+        }
         bm.register(new TableEntry(MOVIES_DB,    MOVIES_SCHEMA));
         bm.register(new TableEntry(WORKEDON_DB,  WORKEDON_SCHEMA));
         bm.register(new TableEntry(PEOPLE_DB,    PEOPLE_SCHEMA));
@@ -147,10 +184,20 @@ public class RunQuery {
         Project finalProj = new Project(join2, outSchema);
 
         // ---- Execute --------------------------------------------------------
+        long startNanos = System.nanoTime();
         long resultCount = 0;
         boolean opened = false;
         try {
+            if (recorder != null) {
+                recorder.operatorOpen("project", "open query plan");
+                if (useIndex) {
+                    recorder.btreeSearchBegin(TITLE_IDX, startRange, endRange);
+                }
+            }
             finalProj.open();
+            if (recorder != null && useIndex) {
+                recorder.btreeSearchEnd();
+            }
             opened = true;
             // BufferedWriter collects small writes in memory and sends them to the
             // file in larger batches, avoiding a disk write for every field or row.
@@ -158,7 +205,18 @@ public class RunQuery {
             try (BufferedWriter writer = Files.newBufferedWriter(
                     query.outputPath(), StandardCharsets.UTF_8)) {
                 GenericRecord result;
-                while ((result = finalProj.next()) != null) {
+                while (true) {
+                    if (recorder != null) {
+                        recorder.operatorNext("project");
+                    }
+                    result = finalProj.next();
+                    if (result == null) {
+                        break;
+                    }
+                    if (recorder != null) {
+                        recorder.operatorEmit("project");
+                        recorder.queryResult(result);
+                    }
                     String title = new String(result.getFieldBytes("title")).trim();
                     String name  = new String(result.getFieldBytes("name")).trim();
                     writer.write(title);
@@ -173,12 +231,121 @@ public class RunQuery {
         } finally {
             if (opened) {
                 finalProj.close();
+                if (recorder != null) {
+                    recorder.operatorClose("project");
+                }
             }
             query.cleanup();
         }
 
-        return resultCount;
+        long wallClockMs = Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+        if (recorder != null) {
+            recorder.queryComplete(resultCount);
+            return new RunResult(resultCount, recorder.toTrace(wallClockMs));
+        }
+        return new RunResult(resultCount, null);
     }
+
+    private static TracePlanNode buildPlan(boolean indexed) {
+        TracePlanNode moviesAccess;
+        if (indexed) {
+            moviesAccess = new TracePlanNode(
+                    "movies-index",
+                    TracePlanNodeType.INDEX_SCAN,
+                    "Index Scan: Movies",
+                    "B+ tree range on title",
+                    List.of());
+        } else {
+            moviesAccess = new TracePlanNode(
+                    "movies-sigma",
+                    TracePlanNodeType.SELECTION,
+                    "Selection: title in range",
+                    "filter over full scan",
+                    List.of(new TracePlanNode(
+                            "movies-scan",
+                            TracePlanNodeType.SCAN,
+                            "Scan: Movies",
+                            MOVIES_DB,
+                            List.of())));
+        }
+
+        TracePlanNode workedOnPipe = new TracePlanNode(
+                "wo-pi",
+                TracePlanNodeType.MATERIALIZE,
+                "Project: movieId, personId",
+                "materialized temp file",
+                List.of(new TracePlanNode(
+                        "wo-sigma",
+                        TracePlanNodeType.SELECTION,
+                        "Selection: category = director",
+                        null,
+                        List.of(new TracePlanNode(
+                                "wo-scan",
+                                TracePlanNodeType.SCAN,
+                                "Scan: WorkedOn",
+                                WORKEDON_DB,
+                                List.of())))));
+        TracePlanNode joinMoviesWorkedOn = new TracePlanNode(
+                "join-movies-wo",
+                TracePlanNodeType.BNL_JOIN,
+                "BNL Join: Movies.movieId = WorkedOn.movieId",
+                null,
+                List.of(moviesAccess, workedOnPipe));
+        TracePlanNode peopleScan = new TracePlanNode(
+                "people-scan",
+                TracePlanNodeType.SCAN,
+                "Scan: People",
+                PEOPLE_DB,
+                List.of());
+        TracePlanNode joinPeople = new TracePlanNode(
+                "join-wo-people",
+                TracePlanNodeType.BNL_JOIN,
+                "BNL Join: WorkedOn.personId = People.personId",
+                null,
+                List.of(joinMoviesWorkedOn, peopleScan));
+        return new TracePlanNode(
+                "project",
+                TracePlanNodeType.PROJECT,
+                "Project: title, name",
+                null,
+                List.of(joinPeople));
+    }
+
+    private static Map<String, TraceTable> buildTraceTables() throws IOException {
+        Map<String, TraceTable> tables = new LinkedHashMap<>();
+        tables.put(MOVIES_DB, new TraceTable(MOVIES_DB, recordSize(MOVIES_SCHEMA), recordCount(MOVIES_DB)));
+        tables.put(WORKEDON_DB, new TraceTable(WORKEDON_DB, recordSize(WORKEDON_SCHEMA), recordCount(WORKEDON_DB)));
+        tables.put(PEOPLE_DB, new TraceTable(PEOPLE_DB, recordSize(PEOPLE_SCHEMA), recordCount(PEOPLE_DB)));
+        tables.put(TITLE_IDX, new TraceTable(TITLE_IDX, MOVIES_SCHEMA.get("title")));
+        return tables;
+    }
+
+    private static int recordSize(Map<String, Integer> schema) {
+        return schema.values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    private static long recordCount(String fileId) throws IOException {
+        File file = new File(fileId);
+        if (!file.exists() || file.length() == 0) {
+            return 0;
+        }
+        if (file.length() % RawPage.MAX_PAGE_LEN != 0) {
+            throw new IllegalStateException("File size is not a multiple of pages: " + fileId);
+        }
+        long count = 0;
+        try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+            byte[] header = new byte[4];
+            int pageCount = Math.toIntExact(file.length() / RawPage.MAX_PAGE_LEN);
+            for (int pageId = 0; pageId < pageCount; pageId++) {
+                raf.seek(RawPage.getOffset(pageId));
+                raf.readFully(header);
+                count += ByteBuffer.wrap(header).getInt();
+            }
+        }
+        return count;
+    }
+
+    private record RunResult(long resultCount, QueryTrace trace) {}
 
     private static final class QueryContext {
         private static final String TEMP_PREFIX = ".redb-query-";
