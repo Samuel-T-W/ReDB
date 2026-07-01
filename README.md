@@ -40,6 +40,7 @@ src/
   buffer/     Buffer pool (LRU), frames, page keys, multi-file catalog
   storage/    Pages, records, and the B+ tree (nodes, splits, search, bulk load)
   operators/  Pull-based query operators (scan, index scan, select, project, join)
+  trace/      QueryTrace model, recorder, and JSON serialization for the web demo
   util/       Record serialization and pre-processing helpers
 test/         Unit, end-to-end, and performance tests
 ```
