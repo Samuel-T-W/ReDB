@@ -40,6 +40,7 @@ src/
   buffer/     Buffer pool (LRU), frames, page keys, multi-file catalog
   storage/    Pages, records, and the B+ tree (nodes, splits, search, bulk load)
   operators/  Pull-based query operators (scan, index scan, select, project, join)
+  trace/      QueryTrace model, recorder, and JSON serialization for the web demo
   util/       Record serialization and pre-processing helpers
 test/         Unit, end-to-end, and performance tests
 ```
@@ -74,6 +75,11 @@ mvn test -Dtest=BTreeUnitTest           # B+ tree unit tests
 mvn test -Dtest=End2EndTest             # integration test (loads CSV data)
 ```
 
+The test suite bootstraps deterministic `data/title.csv`, `data/workedon.csv`,
+and `data/name.csv` fixtures at test time, along with a writable `report/`
+directory for performance outputs. You do not need to preload course data to
+run `mvn test` locally.
+
 ## Using the engine
 
 ### Pre-process (load tables, optionally build the index)
@@ -87,7 +93,7 @@ Loads the source CSVs into binary heap files and, optionally, builds a B+ tree i
 ### Run a range query
 
 ```bash
-./run.sh run_query <start_range> <end_range> <buffer_size>
+./run.sh run_query <start_range> <end_range> <buffer_size> [--index] [--trace-output <path>]
 ```
 
 Example:
@@ -97,6 +103,19 @@ Example:
 ```
 
 The query finds the people associated with records whose title falls in `[start_range, end_range]`, executing a fixed plan of selections, projections, and block nested loop joins. Results are written to `query_results.csv`.
+
+Add `--index` to use the title B+ tree access path. Add `--trace-output <path>` to serialize the run as a `QueryTrace` JSON artifact using the schema in `src/trace/*.java`; this does not require the web app to run Java at display time.
+
+### Refresh the web demo trace
+
+The committed web artifact at `web/public/data/query-trace-default.json` is produced from a deterministic miniature database fixture and the real `RunQuery.capture(...)` path:
+
+```bash
+mvn -q compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt
+java -cp "target/classes:$(cat target/cp.txt)" DemoTraceExport
+```
+
+The exporter overwrites ignored top-level generated files (`movies.db`, `workedon.db`, `people.db`, `title.idx`, and `query_results.csv`) while it builds the fixture. Only the JSON artifact is intended to be committed.
 
 ## Data
 
