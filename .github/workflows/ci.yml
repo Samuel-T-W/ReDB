@@ -19,6 +19,13 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Fetch test fixture data
+        run: |
+          mkdir -p data
+          gh release download test-fixtures-v1 --repo "$GITHUB_REPOSITORY" --dir data --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run tests
         run: mvn test
 

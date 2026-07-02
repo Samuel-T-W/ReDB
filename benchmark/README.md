@@ -1,3 +1,20 @@
+## `btree/` range-query benchmarks
+
+`benchmark/btree/` holds JUnit test classes (`MovieIDRangeQueryPerformanceTest`,
+`TitleRangeQueryPerformanceTest`, and their `Pinned*` variants) that time
+table-scan vs. B+ tree index-scan range queries and write timing CSVs under
+`report/`. They live outside `test/` on purpose so `mvn test` does not compile
+or run them — they were never meant as CI correctness gates, only as tooling
+to regenerate report figures.
+
+To run one, temporarily copy it back into `test/btree/` and invoke it directly:
+
+```bash
+cp benchmark/btree/MovieIDRangeQueryPerformanceTest.java test/btree/
+mvn test -Dtest=MovieIDRangeQueryPerformanceTest
+rm test/btree/MovieIDRangeQueryPerformanceTest.java
+```
+
 # ReDB concurrent query benchmark
 
 This benchmark runs the existing `run_query` plan with multiple isolated JVM
