@@ -4,12 +4,12 @@
 // the real engine will. Swap this out for committed engine traces later.
 
 import {
-  CURRENT_SCHEMA_VERSION,
   type QueryTrace,
   type TraceEvent,
   type TraceEventType,
   type TracePlanNode,
 } from "../types/trace";
+import { CURRENT_SCHEMA_VERSION } from "../types/traceSchema";
 
 export interface TraceParams {
   start: string;

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { replay } from "./replay";
 import { generateTrace } from "./generateTrace";
-import { CURRENT_SCHEMA_VERSION, type QueryTrace, type TraceEvent } from "../types/trace";
+import { type QueryTrace, type TraceEvent } from "../types/trace";
+import { CURRENT_SCHEMA_VERSION } from "../types/traceSchema";
 
 // A tiny hand-built trace with a 2-frame pool: load page A, load page B, hit A,
 // then miss page C which evicts the LRU frame and loads C, then emit one result.
