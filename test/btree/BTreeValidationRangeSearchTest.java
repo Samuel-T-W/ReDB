@@ -89,7 +89,6 @@ public class BTreeValidationRangeSearchTest {
 	 * via the BufferManager. Returns the total number of data pages allocated.
 	 */
 	private int loadMoviesTable() throws Exception {
-		assumeMoviesData(MOVIES_TSV);
 		int numDataPages = 0;
 		Page currentPage = bm.createPage(MOVIES_DB, null);
 		numDataPages++;

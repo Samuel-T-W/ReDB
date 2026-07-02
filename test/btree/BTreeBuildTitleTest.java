@@ -112,7 +112,6 @@ public class BTreeBuildTitleTest {
 	 */
 	@Test
 	public void testBuildTitleIndex() throws Exception {
-		assumeMoviesData(MOVIES_TSV);
 		// ----------------------------------------------------------------
 		// Phase 1: Load the Movies table from CSV into movies.db
 		// ----------------------------------------------------------------

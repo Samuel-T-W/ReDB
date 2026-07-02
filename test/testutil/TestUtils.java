@@ -3,11 +3,8 @@ package testutil;
 import buffer.BufferManager;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.Assumptions;
 import storage.GenericPage;
 import storage.GenericRecord;
 import storage.K;
@@ -15,19 +12,6 @@ import util.RecordUtils;
 
 public final class TestUtils {
 	private TestUtils() {
-	}
-
-	/**
-	 * Skips (rather than fails) the calling test when the movies dataset is not
-	 * present on disk. The IMDB-style dataset (e.g. {@code data/title.csv}) is large
-	 * and intentionally not committed to the repository, so data-dependent tests run
-	 * locally when the dataset is available and are reported as skipped in CI.
-	 *
-	 * @param path the dataset path the test is about to read
-	 */
-	public static void assumeMoviesData(String path) {
-		Assumptions.assumeTrue(Files.exists(Path.of(path)), () -> "Skipping: movies dataset not found at " + path
-				+ " (large IMDB-style dataset is not committed to the repo)");
 	}
 
 	public static byte[] toFixedBytes(String s, int length) {
