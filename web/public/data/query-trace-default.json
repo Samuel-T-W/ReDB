@@ -1,9 +1,9 @@
 {
   "schemaVersion" : 1,
   "run" : {
-    "id" : "85f6ce7e-8460-4117-b197-f60e5947dc80",
+    "id" : "766e1a3e-dbe9-4146-9627-4cf300d0c500",
     "command" : "run_query",
-    "startedAt" : "2026-06-29T02:02:31.617438Z",
+    "startedAt" : "2026-07-02T20:26:18.351563Z",
     "range" : {
       "start" : "M",
       "end" : "Mz"
@@ -17,9 +17,9 @@
     "bufferHits" : 15,
     "bufferMisses" : 5,
     "evictions" : 3,
-    "recordsExamined" : 4,
+    "recordsExamined" : 38,
     "recordsEmitted" : 3,
-    "operatorNextCalls" : 4,
+    "operatorNextCalls" : 38,
     "btreeNodeVisits" : 3
   },
   "plan" : {
@@ -68,19 +68,19 @@
     } ]
   },
   "tables" : {
-    "title.idx" : {
-      "fileId" : "title.idx",
-      "recordSize" : 30
+    "workedon.db" : {
+      "fileId" : "workedon.db",
+      "recordSize" : 39,
+      "recordCount" : 5
     },
     "movies.db" : {
       "fileId" : "movies.db",
       "recordSize" : 39,
       "recordCount" : 5
     },
-    "workedon.db" : {
-      "fileId" : "workedon.db",
-      "recordSize" : 39,
-      "recordCount" : 5
+    "title.idx" : {
+      "fileId" : "title.idx",
+      "recordSize" : 30
     },
     "people.db" : {
       "fileId" : "people.db",
@@ -92,11 +92,25 @@
     "seq" : 0,
     "timeMs" : 0,
     "type" : "operator.open",
-    "operatorId" : "project",
-    "message" : "open query plan"
+    "operatorId" : "project"
   }, {
     "seq" : 1,
     "timeMs" : 1,
+    "type" : "operator.open",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 2,
+    "timeMs" : 2,
+    "type" : "operator.open",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 3,
+    "timeMs" : 3,
+    "type" : "operator.open",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 4,
+    "timeMs" : 4,
     "type" : "btree.search_begin",
     "operatorId" : "movies-index",
     "btree" : {
@@ -105,16 +119,16 @@
       "rangeEnd" : "Mz"
     }
   }, {
-    "seq" : 2,
-    "timeMs" : 2,
+    "seq" : 5,
+    "timeMs" : 5,
     "type" : "buffer.miss",
     "page" : {
       "fileId" : "title.idx",
       "pageId" : 0
     }
   }, {
-    "seq" : 3,
-    "timeMs" : 3,
+    "seq" : 6,
+    "timeMs" : 6,
     "type" : "buffer.page_load",
     "page" : {
       "fileId" : "title.idx",
@@ -126,8 +140,8 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 4,
-    "timeMs" : 4,
+    "seq" : 7,
+    "timeMs" : 7,
     "type" : "btree.node_visit",
     "operatorId" : "movies-index",
     "page" : {
@@ -140,16 +154,16 @@
       "nodeType" : "INTERNAL"
     }
   }, {
-    "seq" : 5,
-    "timeMs" : 5,
+    "seq" : 8,
+    "timeMs" : 8,
     "type" : "buffer.miss",
     "page" : {
       "fileId" : "title.idx",
       "pageId" : 1
     }
   }, {
-    "seq" : 6,
-    "timeMs" : 6,
+    "seq" : 9,
+    "timeMs" : 9,
     "type" : "buffer.page_load",
     "page" : {
       "fileId" : "title.idx",
@@ -161,8 +175,8 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 7,
-    "timeMs" : 7,
+    "seq" : 10,
+    "timeMs" : 10,
     "type" : "btree.node_visit",
     "operatorId" : "movies-index",
     "page" : {
@@ -175,8 +189,8 @@
       "nodeType" : "LEAF"
     }
   }, {
-    "seq" : 8,
-    "timeMs" : 8,
+    "seq" : 11,
+    "timeMs" : 11,
     "type" : "buffer.hit",
     "page" : {
       "fileId" : "title.idx",
@@ -188,8 +202,8 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 9,
-    "timeMs" : 9,
+    "seq" : 12,
+    "timeMs" : 12,
     "type" : "btree.node_visit",
     "operatorId" : "movies-index",
     "page" : {
@@ -202,11 +216,31 @@
       "nodeType" : "LEAF"
     }
   }, {
-    "seq" : 10,
-    "timeMs" : 10,
+    "seq" : 13,
+    "timeMs" : 13,
+    "type" : "btree.search_end",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 14,
+    "timeMs" : 14,
+    "type" : "operator.open",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 15,
+    "timeMs" : 15,
+    "type" : "operator.open",
+    "operatorId" : "wo-sigma"
+  }, {
+    "seq" : 16,
+    "timeMs" : 16,
+    "type" : "operator.open",
+    "operatorId" : "wo-scan"
+  }, {
+    "seq" : 17,
+    "timeMs" : 17,
     "type" : "buffer.page_load",
     "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
       "pageId" : 0
     },
     "frame" : {
@@ -215,287 +249,128 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 11,
-    "timeMs" : 11,
-    "type" : "buffer.miss",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    }
-  }, {
-    "seq" : 12,
-    "timeMs" : 12,
-    "type" : "buffer.page_load",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
-  }, {
-    "seq" : 13,
-    "timeMs" : 13,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
-  }, {
-    "seq" : 14,
-    "timeMs" : 14,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
-  }, {
-    "seq" : 15,
-    "timeMs" : 15,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
-  }, {
-    "seq" : 16,
-    "timeMs" : 16,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "workedon.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
-  }, {
-    "seq" : 17,
-    "timeMs" : 17,
-    "type" : "buffer.flush",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
-      "pageId" : 0
-    }
-  }, {
     "seq" : 18,
     "timeMs" : 18,
-    "type" : "buffer.miss",
-    "page" : {
-      "fileId" : "movies.db",
-      "pageId" : 0
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 19,
     "timeMs" : 19,
-    "type" : "buffer.page_load",
-    "page" : {
-      "fileId" : "movies.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 4,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 20,
     "timeMs" : 20,
-    "type" : "buffer.evict",
-    "frame" : {
-      "frameId" : 0,
-      "dirty" : false,
-      "pinCount" : 0,
-      "evictedPage" : {
-        "fileId" : "title.idx",
-        "pageId" : 0
-      }
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
     }
   }, {
     "seq" : 21,
     "timeMs" : 21,
     "type" : "buffer.page_load",
     "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-bnl-outer-0",
+      "fileId" : "workedon.db",
       "pageId" : 0
     },
     "frame" : {
-      "frameId" : 0,
+      "frameId" : 3,
       "dirty" : false,
       "pinCount" : 1
     }
   }, {
     "seq" : 22,
     "timeMs" : 22,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "movies.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 4,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 23,
     "timeMs" : 23,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : "movies.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 4,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 24,
     "timeMs" : 24,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 2,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 25,
     "timeMs" : 25,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 2,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 26,
     "timeMs" : 26,
-    "type" : "buffer.evict",
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
     "frame" : {
-      "frameId" : 1,
+      "frameId" : 3,
       "dirty" : false,
-      "pinCount" : 0,
-      "evictedPage" : {
-        "fileId" : "title.idx",
-        "pageId" : 1
-      }
+      "pinCount" : 1
     }
   }, {
     "seq" : 27,
     "timeMs" : 27,
-    "type" : "buffer.page_load",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-bnl-outer-1",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 1,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 28,
     "timeMs" : 28,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 2,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 29,
     "timeMs" : 29,
-    "type" : "buffer.hit",
-    "page" : {
-      "fileId" : ".redb-query-6f0319be-f05b-4a71-b1d7-c62b4541a3a6-workedon-proj.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 2,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 30,
     "timeMs" : 30,
-    "type" : "buffer.miss",
-    "page" : {
-      "fileId" : "people.db",
-      "pageId" : 0
-    }
+    "type" : "operator.next",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 31,
     "timeMs" : 31,
-    "type" : "buffer.evict",
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "workedon.db",
+      "pageId" : 0
+    },
     "frame" : {
       "frameId" : 3,
       "dirty" : false,
-      "pinCount" : 0,
-      "evictedPage" : {
-        "fileId" : "workedon.db",
-        "pageId" : 0
-      }
+      "pinCount" : 1
     }
   }, {
     "seq" : 32,
     "timeMs" : 32,
-    "type" : "buffer.page_load",
-    "page" : {
-      "fileId" : "people.db",
-      "pageId" : 0
-    },
-    "frame" : {
-      "frameId" : 3,
-      "dirty" : false,
-      "pinCount" : 1
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 33,
     "timeMs" : 33,
-    "type" : "btree.search_end",
-    "operatorId" : "movies-index"
+    "type" : "operator.emit",
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 34,
     "timeMs" : 34,
     "type" : "operator.next",
-    "operatorId" : "project"
+    "operatorId" : "wo-sigma"
   }, {
     "seq" : 35,
     "timeMs" : 35,
+    "type" : "operator.next",
+    "operatorId" : "wo-scan"
+  }, {
+    "seq" : 36,
+    "timeMs" : 36,
     "type" : "buffer.hit",
     "page" : {
-      "fileId" : "people.db",
+      "fileId" : "workedon.db",
       "pageId" : 0
     },
     "frame" : {
@@ -504,33 +379,21 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 36,
-    "timeMs" : 36,
-    "type" : "operator.emit",
-    "operatorId" : "project"
-  }, {
     "seq" : 37,
     "timeMs" : 37,
-    "type" : "query.result",
-    "operatorId" : "project",
-    "result" : {
-      "ordinal" : 0,
-      "fields" : {
-        "title" : "Moonrise",
-        "name" : "Mira Stone"
-      }
-    }
+    "type" : "operator.emit",
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 38,
     "timeMs" : 38,
     "type" : "operator.next",
-    "operatorId" : "project"
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 39,
     "timeMs" : 39,
     "type" : "buffer.hit",
     "page" : {
-      "fileId" : "people.db",
+      "fileId" : "workedon.db",
       "pageId" : 0
     },
     "frame" : {
@@ -542,10 +405,476 @@
     "seq" : 40,
     "timeMs" : 40,
     "type" : "operator.emit",
-    "operatorId" : "project"
+    "operatorId" : "wo-scan"
   }, {
     "seq" : 41,
     "timeMs" : 41,
+    "type" : "operator.emit",
+    "operatorId" : "wo-sigma"
+  }, {
+    "seq" : 42,
+    "timeMs" : 42,
+    "type" : "operator.next",
+    "operatorId" : "wo-sigma"
+  }, {
+    "seq" : 43,
+    "timeMs" : 43,
+    "type" : "operator.next",
+    "operatorId" : "wo-scan"
+  }, {
+    "seq" : 44,
+    "timeMs" : 44,
+    "type" : "buffer.flush",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 45,
+    "timeMs" : 45,
+    "type" : "operator.close",
+    "operatorId" : "wo-scan"
+  }, {
+    "seq" : 46,
+    "timeMs" : 46,
+    "type" : "operator.close",
+    "operatorId" : "wo-sigma"
+  }, {
+    "seq" : 47,
+    "timeMs" : 47,
+    "type" : "operator.next",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 48,
+    "timeMs" : 48,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 49,
+    "timeMs" : 49,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 50,
+    "timeMs" : 50,
+    "type" : "operator.emit",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 51,
+    "timeMs" : 51,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 0,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "title.idx",
+        "pageId" : 0
+      }
+    }
+  }, {
+    "seq" : 52,
+    "timeMs" : 52,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-bnl-outer-0",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 0,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 53,
+    "timeMs" : 53,
+    "type" : "operator.next",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 54,
+    "timeMs" : 54,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 55,
+    "timeMs" : 55,
+    "type" : "operator.emit",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 56,
+    "timeMs" : 56,
+    "type" : "operator.next",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 57,
+    "timeMs" : 57,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "movies.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 4,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 58,
+    "timeMs" : 58,
+    "type" : "operator.emit",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 59,
+    "timeMs" : 59,
+    "type" : "operator.next",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 60,
+    "timeMs" : 60,
+    "type" : "operator.close",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 61,
+    "timeMs" : 61,
+    "type" : "operator.open",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 62,
+    "timeMs" : 62,
+    "type" : "operator.next",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 63,
+    "timeMs" : 63,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 64,
+    "timeMs" : 64,
+    "type" : "operator.emit",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 65,
+    "timeMs" : 65,
+    "type" : "operator.open",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 66,
+    "timeMs" : 66,
+    "type" : "operator.next",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 67,
+    "timeMs" : 67,
+    "type" : "operator.next",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 68,
+    "timeMs" : 68,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 69,
+    "timeMs" : 69,
+    "type" : "operator.emit",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 70,
+    "timeMs" : 70,
+    "type" : "operator.emit",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 71,
+    "timeMs" : 71,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "title.idx",
+        "pageId" : 1
+      }
+    }
+  }, {
+    "seq" : 72,
+    "timeMs" : 72,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-bnl-outer-1",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 1,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 73,
+    "timeMs" : 73,
+    "type" : "operator.next",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 74,
+    "timeMs" : 74,
+    "type" : "operator.next",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 75,
+    "timeMs" : 75,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 76,
+    "timeMs" : 76,
+    "type" : "operator.emit",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 77,
+    "timeMs" : 77,
+    "type" : "operator.emit",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 78,
+    "timeMs" : 78,
+    "type" : "operator.next",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 79,
+    "timeMs" : 79,
+    "type" : "operator.next",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 80,
+    "timeMs" : 80,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : ".redb-query-c058cef4-d038-4535-b1f3-73dccc8571e4-workedon-proj.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 2,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 81,
+    "timeMs" : 81,
+    "type" : "operator.emit",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 82,
+    "timeMs" : 82,
+    "type" : "operator.emit",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 83,
+    "timeMs" : 83,
+    "type" : "operator.next",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 84,
+    "timeMs" : 84,
+    "type" : "operator.next",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 85,
+    "timeMs" : 85,
+    "type" : "operator.close",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 86,
+    "timeMs" : 86,
+    "type" : "operator.open",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 87,
+    "timeMs" : 87,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 88,
+    "timeMs" : 88,
+    "type" : "buffer.miss",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    }
+  }, {
+    "seq" : 89,
+    "timeMs" : 89,
+    "type" : "buffer.evict",
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 0,
+      "evictedPage" : {
+        "fileId" : "workedon.db",
+        "pageId" : 0
+      }
+    }
+  }, {
+    "seq" : 90,
+    "timeMs" : 90,
+    "type" : "buffer.page_load",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 91,
+    "timeMs" : 91,
+    "type" : "operator.emit",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 92,
+    "timeMs" : 92,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 93,
+    "timeMs" : 93,
+    "type" : "operator.next",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 94,
+    "timeMs" : 94,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 95,
+    "timeMs" : 95,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 96,
+    "timeMs" : 96,
+    "type" : "operator.emit",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 97,
+    "timeMs" : 97,
+    "type" : "operator.emit",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 98,
+    "timeMs" : 98,
+    "type" : "operator.emit",
+    "operatorId" : "project"
+  }, {
+    "seq" : 99,
+    "timeMs" : 99,
+    "type" : "query.result",
+    "operatorId" : "project",
+    "result" : {
+      "ordinal" : 0,
+      "fields" : {
+        "title" : "Moonrise",
+        "name" : "Mira Stone"
+      }
+    }
+  }, {
+    "seq" : 100,
+    "timeMs" : 100,
+    "type" : "operator.next",
+    "operatorId" : "project"
+  }, {
+    "seq" : 101,
+    "timeMs" : 101,
+    "type" : "operator.next",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 102,
+    "timeMs" : 102,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 103,
+    "timeMs" : 103,
+    "type" : "buffer.hit",
+    "page" : {
+      "fileId" : "people.db",
+      "pageId" : 0
+    },
+    "frame" : {
+      "frameId" : 3,
+      "dirty" : false,
+      "pinCount" : 1
+    }
+  }, {
+    "seq" : 104,
+    "timeMs" : 104,
+    "type" : "operator.emit",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 105,
+    "timeMs" : 105,
+    "type" : "operator.emit",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 106,
+    "timeMs" : 106,
+    "type" : "operator.emit",
+    "operatorId" : "project"
+  }, {
+    "seq" : 107,
+    "timeMs" : 107,
     "type" : "query.result",
     "operatorId" : "project",
     "result" : {
@@ -556,13 +885,23 @@
       }
     }
   }, {
-    "seq" : 42,
-    "timeMs" : 42,
+    "seq" : 108,
+    "timeMs" : 108,
     "type" : "operator.next",
     "operatorId" : "project"
   }, {
-    "seq" : 43,
-    "timeMs" : 43,
+    "seq" : 109,
+    "timeMs" : 109,
+    "type" : "operator.next",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 110,
+    "timeMs" : 110,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 111,
+    "timeMs" : 111,
     "type" : "buffer.hit",
     "page" : {
       "fileId" : "people.db",
@@ -574,13 +913,23 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 44,
-    "timeMs" : 44,
+    "seq" : 112,
+    "timeMs" : 112,
+    "type" : "operator.emit",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 113,
+    "timeMs" : 113,
+    "type" : "operator.emit",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 114,
+    "timeMs" : 114,
     "type" : "operator.emit",
     "operatorId" : "project"
   }, {
-    "seq" : 45,
-    "timeMs" : 45,
+    "seq" : 115,
+    "timeMs" : 115,
     "type" : "query.result",
     "operatorId" : "project",
     "result" : {
@@ -591,13 +940,23 @@
       }
     }
   }, {
-    "seq" : 46,
-    "timeMs" : 46,
+    "seq" : 116,
+    "timeMs" : 116,
     "type" : "operator.next",
     "operatorId" : "project"
   }, {
-    "seq" : 47,
-    "timeMs" : 47,
+    "seq" : 117,
+    "timeMs" : 117,
+    "type" : "operator.next",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 118,
+    "timeMs" : 118,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 119,
+    "timeMs" : 119,
     "type" : "buffer.hit",
     "page" : {
       "fileId" : "people.db",
@@ -609,13 +968,48 @@
       "pinCount" : 1
     }
   }, {
-    "seq" : 48,
-    "timeMs" : 48,
+    "seq" : 120,
+    "timeMs" : 120,
+    "type" : "operator.emit",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 121,
+    "timeMs" : 121,
+    "type" : "operator.next",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 122,
+    "timeMs" : 122,
+    "type" : "operator.close",
+    "operatorId" : "movies-index"
+  }, {
+    "seq" : 123,
+    "timeMs" : 123,
+    "type" : "operator.close",
+    "operatorId" : "wo-pi"
+  }, {
+    "seq" : 124,
+    "timeMs" : 124,
+    "type" : "operator.close",
+    "operatorId" : "join-movies-wo"
+  }, {
+    "seq" : 125,
+    "timeMs" : 125,
+    "type" : "operator.close",
+    "operatorId" : "people-scan"
+  }, {
+    "seq" : 126,
+    "timeMs" : 126,
+    "type" : "operator.close",
+    "operatorId" : "join-wo-people"
+  }, {
+    "seq" : 127,
+    "timeMs" : 127,
     "type" : "operator.close",
     "operatorId" : "project"
   }, {
-    "seq" : 49,
-    "timeMs" : 49,
+    "seq" : 128,
+    "timeMs" : 128,
     "type" : "query.complete",
     "message" : "3 rows"
   } ]

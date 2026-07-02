@@ -13,7 +13,6 @@ import storage.GenericRecord;
 /** Collects trace events while the regular run_query operator tree executes. */
 public final class QueryTraceRecorder implements BufferTraceListener {
     private final TraceRun runTemplate;
-    private final TracePlanNode plan;
     private final Map<String, TraceTable> tables;
     private final List<TraceEvent> events = new ArrayList<>();
 
@@ -32,7 +31,6 @@ public final class QueryTraceRecorder implements BufferTraceListener {
             String endRange,
             int bufferSize,
             boolean indexed,
-            TracePlanNode plan,
             Map<String, TraceTable> tables) {
         this.runTemplate = new TraceRun(
                 runId,
@@ -42,7 +40,6 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 bufferSize,
                 indexed,
                 0);
-        this.plan = plan;
         this.tables = new LinkedHashMap<>(tables);
     }
 
@@ -116,7 +113,7 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 resultCount + " rows"));
     }
 
-    public QueryTrace toTrace(long wallClockMs) {
+    public QueryTrace toTrace(TracePlanNode plan, long wallClockMs) {
         TraceSummary summary = new TraceSummary(
                 pagesRead,
                 bufferHits,
