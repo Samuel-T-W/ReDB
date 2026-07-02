@@ -18,7 +18,16 @@ The invented numbers are internally consistent and respond to the controls (titl
 npm install      # once
 npm run dev      # dev server on http://localhost:5180
 npm run build    # type-check + production build into dist/
+npm run codegen  # regenerate src/types/trace.ts from the Java trace model
 ```
+
+`src/types/trace.ts` is **generated**, not hand-written.
+The Java records/enums in `../src/trace/*.java` are the source of truth; the [typescript-generator](https://github.com/vojtechhabarta/typescript-generator) Maven plugin (configured in the root `pom.xml`) emits the matching TS interfaces and unions.
+`npm run codegen` just runs `mvn process-classes` for you, so it needs the JDK/Maven toolchain on `PATH`.
+Run it after changing the Java model.
+Field optionality comes from JSpecify `@Nullable` on the Java record components; `Instant` maps to `string`; enum wire names come from `@JsonValue`.
+The one thing not generated is `CURRENT_SCHEMA_VERSION` (the plugin emits types only), kept by hand in `src/types/traceSchema.ts`.
+`mvn test` fails if the committed `trace.ts` drifts from what the Java model generates, so a forgotten regen doesn't slip through CI.
 
 ## Test
 
@@ -48,5 +57,7 @@ src/
     presets.ts            # title-range and buffer-size presets the demo offers
     generateTrace.ts      # builds a schema-valid QueryTrace from demo settings
     replay.ts             # replays a trace up to a cursor into UI state
-  types/trace.ts          # TypeScript mirror of the Java trace model
+  types/
+    trace.ts              # GENERATED from ../src/trace/*.java (do not edit by hand)
+    traceSchema.ts        # CURRENT_SCHEMA_VERSION (not emitted by the generator)
 ```
