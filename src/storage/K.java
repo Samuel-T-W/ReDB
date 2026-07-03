@@ -14,7 +14,7 @@ public class K {
 		this.key = str.toCharArray();
 	}
 
-	byte[] getKeyAsBytes() {
+	public byte[] getKeyAsBytes() {
 		String keyString = new String(this.key);
 		return keyString.getBytes(StandardCharsets.UTF_8);
 	}

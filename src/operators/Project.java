@@ -4,12 +4,14 @@ import buffer.BufferManager;
 import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 import storage.GenericPage;
 import storage.GenericRecord;
 import storage.RawPage;
 
-public class Project implements Operator {
+public class Project extends AbstractOperator {
 
     private final Operator child;
     private final Map<String, Integer> outputSchema;
@@ -55,7 +57,7 @@ public class Project implements Operator {
     }
 
     @Override
-    public void open() {
+    protected void doOpen() {
         if (!materialize) {
             child.open();
             return;
@@ -70,7 +72,7 @@ public class Project implements Operator {
     }
 
     @Override
-    public GenericRecord next() {
+    protected GenericRecord fetchNext() {
         if (!materialize) {
             GenericRecord rec = child.next();
             if (rec == null) return null;
@@ -80,12 +82,31 @@ public class Project implements Operator {
     }
 
     @Override
-    public void close() {
+    protected void doClose() {
         if (!materialize) {
             child.close();
         } else {
             tempScan.close();
         }
+    }
+
+    public boolean isMaterializing() {
+        return materialize;
+    }
+
+    @Override
+    public List<Operator> children() {
+        return List.of(child);
+    }
+
+    @Override
+    public String label() {
+        return "Project: " + String.join(", ", outputSchema.keySet());
+    }
+
+    @Override
+    public @Nullable String detail() {
+        return materialize ? "materialized temp file" : null;
     }
 
     /** Deletes the materialized temp file. Call once after the query finishes. */

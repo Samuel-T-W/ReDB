@@ -11,7 +11,7 @@ import storage.K;
 import storage.Page;
 import storage.RecordId;
 
-public class IndexScan implements Operator {
+public class IndexScan extends AbstractOperator {
 
     private final BufferManager bm;
     private final String tableFileId;
@@ -38,12 +38,21 @@ public class IndexScan implements Operator {
     }
 
     @Override
-    public void open() {
+    protected void doOpen() {
+        // Bracket the range search so index-page accesses observed by the
+        // buffer layer can be attributed to this operator's search phase.
+        OperatorTraceListener trace = trace();
+        if (trace != null) {
+            trace.indexSearchBegin(traceId(), btree.fileId(), startKey.getKeyAsBytes(), endKey.getKeyAsBytes());
+        }
         rids = btree.rangeSearch(startKey, endKey);
+        if (trace != null) {
+            trace.indexSearchEnd(traceId());
+        }
     }
 
     @Override
-    public GenericRecord next() {
+    protected GenericRecord fetchNext() {
         if (rids == null || !rids.hasNext()) return null;
         RecordId rid = rids.next();
         try {
@@ -57,7 +66,17 @@ public class IndexScan implements Operator {
     }
 
     @Override
-    public void close() {
+    protected void doClose() {
         rids = null;
+    }
+
+    @Override
+    public String label() {
+        return "Index Scan: " + tableFileId;
+    }
+
+    @Override
+    public String detail() {
+        return "B+ tree range on " + btree.fileId();
     }
 }

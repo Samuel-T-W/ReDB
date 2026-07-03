@@ -13,7 +13,7 @@ import storage.GenericRecord;
 import storage.RawPage;
 import storage.RecordId;
 
-public class Join implements Operator {
+public class Join extends AbstractOperator {
 
     private final Operator outer;
     private final Operator inner;
@@ -58,7 +58,7 @@ public class Join implements Operator {
     }
 
     @Override
-    public void open() {
+    protected void doOpen() {
         outer.open();
         inner.open();
         outerExhausted = false;
@@ -72,7 +72,7 @@ public class Join implements Operator {
     }
 
     @Override
-    public GenericRecord next() {
+    protected GenericRecord fetchNext() {
         while (true) {
             // Phase 1: emit remaining matches for the current inner record
             if (matchIterator != null && matchIterator.hasNext()) {
@@ -103,7 +103,7 @@ public class Join implements Operator {
     }
 
     @Override
-    public void close() {
+    protected void doClose() {
         unpinBlockPages();
         hashTable = null;
         blockPageById = null;
@@ -113,6 +113,16 @@ public class Join implements Operator {
         outerExhausted = false;
         outer.close();
         inner.close();
+    }
+
+    @Override
+    public List<Operator> children() {
+        return List.of(outer, inner);
+    }
+
+    @Override
+    public String label() {
+        return "BNL Join: " + outerJoinAttr + " = " + innerJoinAttr;
     }
 
     // -----------------------------------------------------------------------

@@ -11,7 +11,7 @@ import storage.GenericRecord;
 import storage.Page;
 import storage.RawPage;
 
-public class Scan implements Operator {
+public class Scan extends AbstractOperator {
 
     private final BufferManager bm;
     private final String fileId;
@@ -39,14 +39,14 @@ public class Scan implements Operator {
     }
 
     @Override
-    public void open() {
+    protected void doOpen() {
         currentPage = 0;
         currentSlot = 0;
         currentNumRecords = -1; // -1 to signify unset value
     }
 
     @Override
-    public GenericRecord next() {
+    protected GenericRecord fetchNext() {
         // Loops only to skip empty pages; a page with records returns on the first
         // iteration.
         while (currentPage < numPages) {
@@ -87,7 +87,7 @@ public class Scan implements Operator {
     }
 
     @Override
-    public void close() {
+    protected void doClose() {
         // check if at least the first page was loaded
         if (currentNumRecords >= 0) {
             bm.unpinPage(fileId, currentPage);
@@ -95,5 +95,10 @@ public class Scan implements Operator {
         currentPage = 0;
         currentSlot = 0;
         currentNumRecords = -1;
+    }
+
+    @Override
+    public String label() {
+        return "Scan: " + fileId;
     }
 }

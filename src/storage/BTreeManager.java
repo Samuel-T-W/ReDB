@@ -129,6 +129,11 @@ public class BTreeManager implements BTree {
 		return this.rootId;
 	}
 
+	/** The index file this tree is stored in. */
+	public String fileId() {
+		return this.fileId;
+	}
+
 	/** Inserts {@code (key, r)} into the tree, splitting pages as needed. */
 	@Override
 	public void insert(K key, RecordId r) {
