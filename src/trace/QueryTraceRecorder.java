@@ -8,13 +8,19 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import operators.OperatorTraceListener;
+import org.jspecify.annotations.Nullable;
 import storage.GenericRecord;
 
 /** Collects trace events while the regular run_query operator tree executes. */
-public final class QueryTraceRecorder implements BufferTraceListener {
+public final class QueryTraceRecorder implements BufferTraceListener, OperatorTraceListener {
     private final TraceRun runTemplate;
     private final Map<String, TraceTable> tables;
     private final List<TraceEvent> events = new ArrayList<>();
+
+    // Set while an index access method is between indexSearchBegin/End, so
+    // B+ tree page visits observed at the buffer layer can be attributed to it.
+    private @Nullable String currentIndexOperatorId;
 
     private long seq;
     private long pagesRead;
@@ -43,43 +49,51 @@ public final class QueryTraceRecorder implements BufferTraceListener {
         this.tables = new LinkedHashMap<>(tables);
     }
 
-    public void operatorOpen(String operatorId, String message) {
-        emit(TraceEvent.of(seq, seq, TraceEventType.OPERATOR_OPEN, operatorId), message);
+    @Override
+    public void operatorOpen(String operatorId) {
+        emit(TraceEvent.of(seq, seq, TraceEventType.OPERATOR_OPEN, operatorId), null);
     }
 
+    @Override
     public void operatorNext(String operatorId) {
         operatorNextCalls++;
         emit(TraceEvent.of(seq, seq, TraceEventType.OPERATOR_NEXT, operatorId), null);
     }
 
+    @Override
     public void operatorEmit(String operatorId) {
         emit(TraceEvent.of(seq, seq, TraceEventType.OPERATOR_EMIT, operatorId), null);
     }
 
+    @Override
     public void operatorClose(String operatorId) {
         emit(TraceEvent.of(seq, seq, TraceEventType.OPERATOR_CLOSE, operatorId), null);
     }
 
-    public void btreeSearchBegin(String indexFileId, String startRange, String endRange) {
+    @Override
+    public void indexSearchBegin(String operatorId, String indexFileId, byte[] startKey, byte[] endKey) {
+        currentIndexOperatorId = operatorId;
         emit(new TraceEvent(
                 seq,
                 seq,
                 TraceEventType.BTREE_SEARCH_BEGIN,
-                "movies-index",
+                operatorId,
                 null,
                 null,
                 null,
                 null,
-                new TraceBTreeDetail(indexFileId, null, null, null, startRange, endRange),
+                new TraceBTreeDetail(indexFileId, null, null, null, fixedString(startKey), fixedString(endKey)),
                 null,
                 null));
     }
 
-    public void btreeSearchEnd() {
-        emit(TraceEvent.of(seq, seq, TraceEventType.BTREE_SEARCH_END, "movies-index"), null);
+    @Override
+    public void indexSearchEnd(String operatorId) {
+        emit(TraceEvent.of(seq, seq, TraceEventType.BTREE_SEARCH_END, operatorId), null);
+        currentIndexOperatorId = null;
     }
 
-    public void queryResult(GenericRecord result) {
+    public void queryResult(String operatorId, GenericRecord result) {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("title", fixedString(result.getFieldBytes("title")));
         fields.put("name", fixedString(result.getFieldBytes("name")));
@@ -87,7 +101,7 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 seq,
                 seq,
                 TraceEventType.QUERY_RESULT,
-                "project",
+                operatorId,
                 null,
                 null,
                 null,
@@ -233,7 +247,7 @@ public final class QueryTraceRecorder implements BufferTraceListener {
                 seq,
                 seq,
                 TraceEventType.BTREE_NODE_VISIT,
-                "movies-index",
+                currentIndexOperatorId,
                 new TracePageRef(fileId, pageId),
                 null,
                 null,

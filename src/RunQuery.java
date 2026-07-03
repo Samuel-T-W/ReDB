@@ -22,6 +22,12 @@ import operators.Selection;
 import storage.BTreeManager;
 import storage.GenericRecord;
 import storage.K;
+import trace.QueryTrace;
+import trace.QueryTraceRecorder;
+import trace.TracePlan;
+import trace.TracePlanNode;
+import trace.TraceTable;
+import trace.TraceTables;
 import util.RecordUtils;
 
 public class RunQuery {
@@ -60,6 +66,30 @@ public class RunQuery {
             String endRange,
             int bufferSize,
             boolean useIndex) throws IOException {
+        return execute(startRange, endRange, bufferSize, useIndex, null).resultCount();
+    }
+
+    public static QueryTrace capture(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex) throws IOException {
+        QueryTraceRecorder recorder = new QueryTraceRecorder(
+                UUID.randomUUID().toString(),
+                startRange,
+                endRange,
+                bufferSize,
+                useIndex,
+                buildTraceTables());
+        return execute(startRange, endRange, bufferSize, useIndex, recorder).trace();
+    }
+
+    private static RunResult execute(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex,
+            QueryTraceRecorder recorder) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
         int N = (bufferSize - 1) / 2;
         if (N < 1) {
@@ -68,6 +98,9 @@ public class RunQuery {
 
         QueryContext query = QueryContext.create();
         BufferManager bm = new BufferManager(bufferSize);
+        if (recorder != null) {
+            bm.setTraceListener(recorder);
+        }
         bm.register(new TableEntry(MOVIES_DB,    MOVIES_SCHEMA));
         bm.register(new TableEntry(WORKEDON_DB,  WORKEDON_SCHEMA));
         bm.register(new TableEntry(PEOPLE_DB,    PEOPLE_SCHEMA));
@@ -82,8 +115,8 @@ public class RunQuery {
         bm.register(new TableEntry(workedonTmp, wkProjSchema));
 
         // ---- Leaf operators -------------------------------------------------
-        Scan workedonScan = new Scan(bm, WORKEDON_DB,  WORKEDON_SCHEMA);
-        Scan peopleScan   = new Scan(bm, PEOPLE_DB,    PEOPLE_SCHEMA);
+        Operator workedonScan = new Scan(bm, WORKEDON_DB, WORKEDON_SCHEMA);
+        Operator peopleScan = new Scan(bm, PEOPLE_DB, PEOPLE_SCHEMA);
 
         // ---- Movies access: index range scan OR scan + selection ------------
         byte[] startBytes = RecordUtils.toFixedBytes(startRange, 30);
@@ -95,21 +128,22 @@ public class RunQuery {
             movieSel = new IndexScan(bm, MOVIES_DB, MOVIES_SCHEMA, titleIdx,
                     new K(startBytes), new K(endBytes));
         } else {
-            Scan movieScan = new Scan(bm, MOVIES_DB, MOVIES_SCHEMA);
+            Operator movieScan = new Scan(bm, MOVIES_DB, MOVIES_SCHEMA);
             movieSel = new Selection(movieScan, rec -> {
                 byte[] t = rec.getFieldBytes("title");
                 return Arrays.compare(t, startBytes) >= 0
                     && Arrays.compare(t, endBytes)   <= 0;
-            });
+            }, "title in range");
         }
 
         // ---- Selection on WorkedOn: category = "director" -------------------
         byte[] dirBytes = RecordUtils.toFixedBytes("director", 20);
-        Selection wkSel = new Selection(workedonScan,
-                rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));
+        Operator wkSel = new Selection(workedonScan,
+                rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes),
+                "category = director");
 
         // ---- Materializing projection: WorkedOn → {movieId, personId} -------
-        Project wkProj = new Project(wkSel, wkProjSchema, bm, workedonTmp);
+        Operator wkProj = new Project(wkSel, wkProjSchema, bm, workedonTmp);
 
         // ---- Join 1: Movies ⋈ WorkedOn on movieId ---------------------------
         Map<String, Integer> j1_ = new LinkedHashMap<>();
@@ -118,7 +152,7 @@ public class RunQuery {
         j1_.put("personId", 10);
         Map<String, Integer> j1Schema = Collections.unmodifiableMap(j1_);
 
-        Join join1 = new Join(
+        Operator join1 = new Join(
                 movieSel, wkProj,
                 "movieId", "movieId",
                 MOVIES_SCHEMA, wkProjSchema, j1Schema,
@@ -132,7 +166,7 @@ public class RunQuery {
         j2_.put("name",   105);
         Map<String, Integer> j2Schema = Collections.unmodifiableMap(j2_);
 
-        Join join2 = new Join(
+        Operator join2 = new Join(
                 join1, peopleScan,
                 "personId", "personId",
                 j1Schema, PEOPLE_SCHEMA, j2Schema,
@@ -144,9 +178,13 @@ public class RunQuery {
         out_.put("name", 105);
         Map<String, Integer> outSchema = Collections.unmodifiableMap(out_);
 
-        Project finalProj = new Project(join2, outSchema);
+        Operator finalProj = new Project(join2, outSchema);
+
+        // ---- Trace attachment: one walk instruments the whole tree ----------
+        TracePlanNode plan = recorder == null ? null : TracePlan.attach(finalProj, recorder);
 
         // ---- Execute --------------------------------------------------------
+        long startNanos = System.nanoTime();
         long resultCount = 0;
         boolean opened = false;
         try {
@@ -159,6 +197,9 @@ public class RunQuery {
                     query.outputPath(), StandardCharsets.UTF_8)) {
                 GenericRecord result;
                 while ((result = finalProj.next()) != null) {
+                    if (recorder != null) {
+                        recorder.queryResult(plan.id(), result);
+                    }
                     String title = new String(result.getFieldBytes("title")).trim();
                     String name  = new String(result.getFieldBytes("name")).trim();
                     writer.write(title);
@@ -177,8 +218,24 @@ public class RunQuery {
             query.cleanup();
         }
 
-        return resultCount;
+        long wallClockMs = Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+        if (recorder != null) {
+            recorder.queryComplete(resultCount);
+            return new RunResult(resultCount, recorder.toTrace(plan, wallClockMs));
+        }
+        return new RunResult(resultCount, null);
     }
+
+    private static Map<String, TraceTable> buildTraceTables() throws IOException {
+        Map<String, TraceTable> tables = new LinkedHashMap<>();
+        tables.put(MOVIES_DB, TraceTables.forTable(MOVIES_DB, MOVIES_SCHEMA));
+        tables.put(WORKEDON_DB, TraceTables.forTable(WORKEDON_DB, WORKEDON_SCHEMA));
+        tables.put(PEOPLE_DB, TraceTables.forTable(PEOPLE_DB, PEOPLE_SCHEMA));
+        tables.put(TITLE_IDX, TraceTables.forIndex(TITLE_IDX, MOVIES_SCHEMA.get("title")));
+        return tables;
+    }
+
+    private record RunResult(long resultCount, QueryTrace trace) {}
 
     private static final class QueryContext {
         private static final String TEMP_PREFIX = ".redb-query-";

@@ -1,10 +1,13 @@
+import java.nio.file.Path;
+import trace.QueryTrace;
+import trace.QueryTraceJson;
 import util.Metrics;
 
 public class Main {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size> [--index] [--metrics]");
+            System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size> [--index] [--metrics] [--trace-output <path>]");
             System.exit(1);
         }
 
@@ -41,13 +44,23 @@ public class Main {
                     System.exit(1);
                 }
                 // Optional flags after the positional args, in any order:
-                // --index uses the B+ tree access method; --metrics prints timing/memory.
+                // --index uses the B+ tree access method; --metrics prints timing/memory;
+                // --trace-output writes a QueryTrace JSON artifact for the run.
                 boolean useIndex = false;
                 boolean metrics = false;
+                Path traceOutput = null;
                 for (int i = 4; i < args.length; i++) {
                     switch (args[i]) {
                         case "--index" -> useIndex = true;
                         case "--metrics" -> metrics = true;
+                        case "--trace-output" -> {
+                            if (i + 1 >= args.length) {
+                                System.err.println("Missing path after --trace-output");
+                                System.exit(1);
+                                return;
+                            }
+                            traceOutput = Path.of(args[++i]);
+                        }
                         default -> {
                             System.err.println("Unknown run_query option: " + args[i]);
                             System.exit(1);
@@ -58,7 +71,14 @@ public class Main {
 
                 // Time only the query execution, excluding arg parsing and startup.
                 long startNanos = System.nanoTime();
-                long resultCount = RunQuery.run(start, end, bufferSize, useIndex);
+                long resultCount;
+                if (traceOutput == null) {
+                    resultCount = RunQuery.run(start, end, bufferSize, useIndex);
+                } else {
+                    QueryTrace trace = RunQuery.capture(start, end, bufferSize, useIndex);
+                    QueryTraceJson.write(trace, traceOutput);
+                    resultCount = trace.summary().recordsEmitted();
+                }
                 long elapsedNanos = System.nanoTime() - startNanos;
                 if (metrics) {
                     Metrics.report(elapsedNanos, resultCount);
