@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateTrace } from "../../data/generateTrace";
+import { loadTrace } from "../../data/loadTrace";
 import { replay } from "../../data/replay";
 import { RANGE_PRESETS } from "../../data/presets";
+import type { QueryTrace } from "../../types/trace";
 import Controls, { type DemoSettings } from "./Controls";
 import PlanTree from "./PlanTree";
 import BufferPool from "./BufferPool";
@@ -9,26 +11,48 @@ import StatsPanel from "./StatsPanel";
 import EventLog from "./EventLog";
 
 const STEP_MS = 280;
+const DEFAULT_SETTINGS: DemoSettings = {
+  presetId: "mid",
+  bufferSize: 5,
+  indexed: true,
+};
+
+function paramsFor(settings: DemoSettings) {
+  const preset = RANGE_PRESETS.find((p) => p.id === settings.presetId) ?? RANGE_PRESETS[0];
+  return {
+    start: preset.start,
+    end: preset.end,
+    bufferSize: settings.bufferSize,
+    indexed: settings.indexed,
+  };
+}
 
 export default function DemoPlayer() {
-  const [settings, setSettings] = useState<DemoSettings>({
-    presetId: "mid",
-    bufferSize: 5,
-    indexed: true,
-  });
+  const [settings, setSettings] = useState<DemoSettings>(DEFAULT_SETTINGS);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [trace, setTrace] = useState<QueryTrace>(() => generateTrace(paramsFor(DEFAULT_SETTINGS)));
   const timer = useRef<number | null>(null);
+  const initialLoad = useRef(true);
 
-  const trace = useMemo(() => {
-    const preset = RANGE_PRESETS.find((p) => p.id === settings.presetId) ?? RANGE_PRESETS[0];
-    return generateTrace({
-      start: preset.start,
-      end: preset.end,
-      bufferSize: settings.bufferSize,
-      indexed: settings.indexed,
+  const traceParams = useMemo(() => paramsFor(settings), [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (initialLoad.current) {
+      initialLoad.current = false;
+    } else {
+      setTrace(generateTrace(traceParams));
+    }
+    loadTrace(traceParams).then(({ trace: loaded }) => {
+      if (!cancelled) {
+        setTrace(loaded);
+      }
     });
-  }, [settings]);
+    return () => {
+      cancelled = true;
+    };
+  }, [traceParams]);
 
   const lastIndex = trace.events.length - 1;
 
