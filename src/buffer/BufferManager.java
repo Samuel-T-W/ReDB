@@ -23,6 +23,7 @@ public class BufferManager {
 	private Map<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
 	private Queue<Integer> freeFrameIndices;
+	private BufferTraceListener traceListener;
 
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private long readIOCount = 0;
@@ -55,6 +56,10 @@ public class BufferManager {
 		return catalog.get(fileName);
 	}
 
+	public void setTraceListener(BufferTraceListener traceListener) {
+		this.traceListener = traceListener;
+	}
+
 	/**
 	 * Fetches a page from memory if available; otherwise, loads it from disk. The
 	 * page is immediately pinned.
@@ -74,11 +79,18 @@ public class BufferManager {
 			movePageToBottomOfLru(pageKey);
 			Frame frame = this.bufferPool[pageTable.get(pageKey)];
 			frame.pinCount++;
+			if (traceListener != null) {
+				traceListener.onBufferHit(
+						fileId, pageId, frame.frameIndex, frame.isDirty, frame.pinCount, frame.page.getByteArray());
+			}
 			return frame.page;
 		}
 
 		// cache miss → disk load
 		readIOCount++;
+		if (traceListener != null) {
+			traceListener.onBufferMiss(fileId, pageId);
+		}
 
 		// load from file
 		byte[] loaded_data = null;
@@ -215,6 +227,14 @@ public class BufferManager {
 		if (evictFrame.isDirty) {
 			writePageToDisk(evictFrame.pageKey.fileId(), evictFrame.page);
 		}
+		if (traceListener != null) {
+			traceListener.onPageEvict(
+					evictFrame.pageKey.fileId(),
+					evictFrame.pageKey.pageId(),
+					evictFrame.frameIndex,
+					evictFrame.isDirty,
+					evictFrame.pinCount);
+		}
 
 		// evict frame content
 		evictCleanup(evictFrame);
@@ -227,6 +247,9 @@ public class BufferManager {
 			int offset = RawPage.getOffset(page.getPid());
 			raf.seek(offset);
 			raf.write(page.getByteArray());
+		}
+		if (traceListener != null) {
+			traceListener.onBufferFlush(fileId, page.getPid());
 		}
 	}
 
@@ -260,6 +283,15 @@ public class BufferManager {
 
 		// add page to page table and automatically moves it to the bottom of the lru
 		pageTable.put(pageKey, freeFrameIndex);
+		if (traceListener != null) {
+			traceListener.onPageLoad(
+					pageKey.fileId(),
+					pageKey.pageId(),
+					frame.frameIndex,
+					frame.isDirty,
+					frame.pinCount,
+					frame.page.getByteArray());
+		}
 
 		return page;
 	}
