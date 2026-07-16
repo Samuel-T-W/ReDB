@@ -50,34 +50,35 @@ public class Scan implements Operator {
         // Loops only to skip empty pages; a page with records returns on the first
         // iteration.
         while (currentPage < numPages) {
+            int pageId = currentPage;
             try {
-                Page page = bm.getPage(fileId, currentPage);
-                GenericPage gp = new GenericPage(page, schema);
+                Page page = bm.getPage(fileId, pageId);
+                try {
+                    GenericPage gp = new GenericPage(page, schema);
 
-                if (currentNumRecords == -1) {
-                    byte[] raw = gp.getByteArray();
-                    currentNumRecords = ByteBuffer.wrap(raw, 0, 4).getInt();
-                }
+                    if (currentNumRecords == -1) {
+                        byte[] raw = gp.getByteArray();
+                        currentNumRecords = ByteBuffer.wrap(raw, 0, 4).getInt();
+                    }
 
-                if (currentSlot < currentNumRecords) {
-                    GenericRecord rec = (GenericRecord) gp.getRecord(currentSlot);
-                    currentSlot++;
-                    if (currentSlot >= currentNumRecords) {
-                        // Last record on this page; advance cursor to the next page.
-                        bm.unpinPage(fileId, currentPage);
+                    if (currentSlot < currentNumRecords) {
+                        GenericRecord rec = (GenericRecord) gp.getRecord(currentSlot);
+                        currentSlot++;
+                        if (currentSlot >= currentNumRecords) {
+                            // Last record on this page; advance cursor to the next page.
+                            currentPage++;
+                            currentSlot = 0;
+                            currentNumRecords = -1;
+                        }
+                        return rec;
+                    } else {
+                        // Empty page: advance and loop to try the next one.
                         currentPage++;
                         currentSlot = 0;
                         currentNumRecords = -1;
-                    } else {
-                        bm.unpinPage(fileId, currentPage);
                     }
-                    return rec;
-                } else {
-                    // Empty page: advance and loop to try the next one.
-                    bm.unpinPage(fileId, currentPage);
-                    currentPage++;
-                    currentSlot = 0;
-                    currentNumRecords = -1;
+                } finally {
+                    bm.unpinPage(fileId, pageId);
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -88,10 +89,6 @@ public class Scan implements Operator {
 
     @Override
     public void close() {
-        // check if at least the first page was loaded
-        if (currentNumRecords >= 0) {
-            bm.unpinPage(fileId, currentPage);
-        }
         currentPage = 0;
         currentSlot = 0;
         currentNumRecords = -1;

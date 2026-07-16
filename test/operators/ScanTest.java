@@ -138,6 +138,28 @@ public class ScanTest {
     }
 
     @Test
+    void closingPartialScan_doesNotReleaseAnotherOwnerPin() throws Exception {
+        List<GenericRecord> records = List.of(
+                makeMovieRecord(SCHEMA, "tt0000001", "Alpha"),
+                makeMovieRecord(SCHEMA, "tt0000002", "Beta")
+        );
+        writePages(bm, filePath, SCHEMA, records);
+
+        Scan scan = new Scan(bm, filePath, SCHEMA);
+        scan.open();
+        scan.next();
+        bm.getPage(filePath, 0);
+        try {
+            assertEquals(1, bm.getPinCount(filePath, 0));
+            scan.close();
+            assertEquals(1, bm.getPinCount(filePath, 0), "scan released a pin it did not own");
+        } finally {
+            bm.unpinPage(filePath, 0);
+        }
+        assertEquals(0, bm.getPinCount(filePath, 0));
+    }
+
+    @Test
     void partialPageFill_onlyInsertedRecordsReturned() throws Exception {
         // Write exactly 2 records onto a page that could hold many more.
         List<GenericRecord> records = List.of(
