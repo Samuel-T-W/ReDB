@@ -163,6 +163,9 @@ public class Join implements Operator {
     }
 
     private void unpinBlockPages() {
+        if (currentBlockPageIds == null) {
+            return;
+        }
         for (int pid : currentBlockPageIds) {
             bm.unpinPage(blockFileId, pid);
         }

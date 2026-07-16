@@ -83,7 +83,7 @@ public class Project implements Operator {
     public void close() {
         if (!materialize) {
             child.close();
-        } else {
+        } else if (tempScan != null) {
             tempScan.close();
         }
     }
@@ -106,6 +106,9 @@ public class Project implements Operator {
     }
 
     private void materialize() {
+        RawPage currentRaw = null;
+        boolean childOpened = false;
+        RuntimeException failure = null;
         try {
             // Ensure temp file exists and is empty
             File f = new File(tempFileId);
@@ -118,8 +121,9 @@ public class Project implements Operator {
             }
 
             child.open();
+            childOpened = true;
 
-            RawPage currentRaw = bm.createPage(tempFileId, null);
+            currentRaw = bm.createPage(tempFileId, null);
             GenericPage currentPage = new GenericPage(currentRaw, outputSchema);
 
             GenericRecord rec;
@@ -128,6 +132,7 @@ public class Project implements Operator {
                 if (currentPage.insertRecord(projected) == -1) {
                     bm.markDirty(tempFileId, currentRaw.getPid());
                     bm.unpinPage(tempFileId, currentRaw.getPid());
+                    currentRaw = null;
                     currentRaw = bm.createPage(tempFileId, null);
                     currentPage = new GenericPage(currentRaw, outputSchema);
                     currentPage.insertRecord(projected);
@@ -135,14 +140,37 @@ public class Project implements Operator {
             }
             bm.markDirty(tempFileId, currentRaw.getPid());
             bm.unpinPage(tempFileId, currentRaw.getPid());
+            currentRaw = null;
             bm.force();
 
             child.close();
+            childOpened = false;
 
             // Build the scan after force() so the file has the correct size on disk
             tempScan = new Scan(bm, tempFileId, outputSchema);
         } catch (IOException e) {
-            throw new RuntimeException("Project materialization failed", e);
+            failure = new RuntimeException("Project materialization failed", e);
+            throw failure;
+        } catch (RuntimeException e) {
+            failure = e;
+            throw e;
+        } finally {
+            if (failure != null) {
+                if (currentRaw != null) {
+                    try {
+                        bm.unpinPage(tempFileId, currentRaw.getPid());
+                    } catch (RuntimeException cleanupFailure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                if (childOpened) {
+                    try {
+                        child.close();
+                    } catch (RuntimeException cleanupFailure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+            }
         }
     }
 }

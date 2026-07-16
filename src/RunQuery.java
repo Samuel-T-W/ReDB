@@ -90,112 +90,129 @@ public class RunQuery {
         }
 
         QueryContext query = QueryContext.create(bm, outputPath);
-
-        // ---- WorkedOn projection schema: {movieId, personId} ----------------
-        Map<String, Integer> wkProj_ = new LinkedHashMap<>();
-        wkProj_.put("movieId",  9);
-        wkProj_.put("personId", 10);
-        Map<String, Integer> wkProjSchema = Collections.unmodifiableMap(wkProj_);
-        String workedonTmp = query.tempFileId("workedon-proj", ".db");
-        bm.register(new TableEntry(workedonTmp, wkProjSchema));
-
-        // ---- Leaf operators -------------------------------------------------
-        Scan workedonScan = new Scan(bm, WORKEDON_DB,  WORKEDON_SCHEMA);
-        Scan peopleScan   = new Scan(bm, PEOPLE_DB,    PEOPLE_SCHEMA);
-
-        // ---- Movies access: index range scan OR scan + selection ------------
-        byte[] startBytes = RecordUtils.toFixedBytes(startRange, 30);
-        byte[] endBytes   = RecordUtils.toFixedBytes(endRange,   30);
-        Operator movieSel;
-        if (useIndex) {
-            BTreeManager titleIdx = BTreeManager.openExisting(
-                    BTREE_DEGREE, TITLE_IDX, bm, MOVIES_SCHEMA.get("title"));
-            movieSel = new IndexScan(bm, MOVIES_DB, MOVIES_SCHEMA, titleIdx,
-                    new K(startBytes), new K(endBytes));
-        } else {
-            Scan movieScan = new Scan(bm, MOVIES_DB, MOVIES_SCHEMA);
-            movieSel = new Selection(movieScan, rec -> {
-                byte[] t = rec.getFieldBytes("title");
-                return Arrays.compare(t, startBytes) >= 0
-                    && Arrays.compare(t, endBytes)   <= 0;
-            });
-        }
-
-        // ---- Selection on WorkedOn: category = "director" -------------------
-        byte[] dirBytes = RecordUtils.toFixedBytes("director", 20);
-        Selection wkSel = new Selection(workedonScan,
-                rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));
-
-        // ---- Materializing projection: WorkedOn → {movieId, personId} -------
-        Project wkProj = new Project(wkSel, wkProjSchema, bm, workedonTmp);
-
-        // ---- Join 1: Movies ⋈ WorkedOn on movieId ---------------------------
-        Map<String, Integer> j1_ = new LinkedHashMap<>();
-        j1_.put("movieId",  9);
-        j1_.put("title",   30);
-        j1_.put("personId", 10);
-        Map<String, Integer> j1Schema = Collections.unmodifiableMap(j1_);
-
-        Join join1 = new Join(
-                movieSel, wkProj,
-                "movieId", "movieId",
-                MOVIES_SCHEMA, wkProjSchema, j1Schema,
-                bm, query.scratchFileId("bnl-outer-0"), N);
-
-        // ---- Join 2: Join1 ⋈ People on personId -----------------------------
-        Map<String, Integer> j2_ = new LinkedHashMap<>();
-        j2_.put("movieId",  9);
-        j2_.put("title",   30);
-        j2_.put("personId", 10);
-        j2_.put("name",   105);
-        Map<String, Integer> j2Schema = Collections.unmodifiableMap(j2_);
-
-        Join join2 = new Join(
-                join1, peopleScan,
-                "personId", "personId",
-                j1Schema, PEOPLE_SCHEMA, j2Schema,
-                bm, query.scratchFileId("bnl-outer-1"), N);
-
-        // ---- Final pipelined projection: → {title, name} --------------------
-        Map<String, Integer> out_ = new LinkedHashMap<>();
-        out_.put("title", 30);
-        out_.put("name", 105);
-        Map<String, Integer> outSchema = Collections.unmodifiableMap(out_);
-
-        Project finalProj = new Project(join2, outSchema);
-
-        // ---- Execute --------------------------------------------------------
-        long resultCount = 0;
-        boolean opened = false;
+        Throwable queryFailure = null;
         try {
-            finalProj.open();
-            opened = true;
-            // BufferedWriter collects small writes in memory and sends them to the
-            // file in larger batches, avoiding a disk write for every field or row.
-            // newBufferedWriter creates or overwrites query_results.csv by default.
-            try (BufferedWriter writer = Files.newBufferedWriter(
-                    query.outputPath(), StandardCharsets.UTF_8)) {
-                GenericRecord result;
-                while ((result = finalProj.next()) != null) {
-                    String title = new String(result.getFieldBytes("title")).trim();
-                    String name  = new String(result.getFieldBytes("name")).trim();
-                    writer.write(title);
-                    writer.write(',');
-                    writer.write(name);
-                    writer.newLine();
-                    resultCount++;
-                }
+            // ---- WorkedOn projection schema: {movieId, personId} ------------
+            Map<String, Integer> wkProj_ = new LinkedHashMap<>();
+            wkProj_.put("movieId",  9);
+            wkProj_.put("personId", 10);
+            Map<String, Integer> wkProjSchema = Collections.unmodifiableMap(wkProj_);
+            String workedonTmp = query.tempFileId("workedon-proj", ".db");
+            bm.register(new TableEntry(workedonTmp, wkProjSchema));
+
+            // ---- Leaf operators ---------------------------------------------
+            Scan workedonScan = new Scan(bm, WORKEDON_DB,  WORKEDON_SCHEMA);
+            Scan peopleScan   = new Scan(bm, PEOPLE_DB,    PEOPLE_SCHEMA);
+
+            // ---- Movies access: index range scan OR scan + selection --------
+            byte[] startBytes = RecordUtils.toFixedBytes(startRange, 30);
+            byte[] endBytes   = RecordUtils.toFixedBytes(endRange,   30);
+            Operator movieSel;
+            if (useIndex) {
+                BTreeManager titleIdx = BTreeManager.openExisting(
+                        BTREE_DEGREE, TITLE_IDX, bm, MOVIES_SCHEMA.get("title"));
+                movieSel = new IndexScan(bm, MOVIES_DB, MOVIES_SCHEMA, titleIdx,
+                        new K(startBytes), new K(endBytes));
+            } else {
+                Scan movieScan = new Scan(bm, MOVIES_DB, MOVIES_SCHEMA);
+                movieSel = new Selection(movieScan, rec -> {
+                    byte[] t = rec.getFieldBytes("title");
+                    return Arrays.compare(t, startBytes) >= 0
+                        && Arrays.compare(t, endBytes)   <= 0;
+                });
             }
-        // finally closes the operator tree and removes this query's temp files,
-        // including when an exception interrupts query execution.
-        } finally {
-            if (opened) {
+
+            // ---- Selection on WorkedOn: category = "director" ---------------
+            byte[] dirBytes = RecordUtils.toFixedBytes("director", 20);
+            Selection wkSel = new Selection(workedonScan,
+                    rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));
+
+            // ---- Materializing projection: WorkedOn → {movieId, personId} ---
+            Project wkProj = new Project(wkSel, wkProjSchema, bm, workedonTmp);
+
+            // ---- Join 1: Movies ⋈ WorkedOn on movieId -----------------------
+            Map<String, Integer> j1_ = new LinkedHashMap<>();
+            j1_.put("movieId",  9);
+            j1_.put("title",   30);
+            j1_.put("personId", 10);
+            Map<String, Integer> j1Schema = Collections.unmodifiableMap(j1_);
+
+            Join join1 = new Join(
+                    movieSel, wkProj,
+                    "movieId", "movieId",
+                    MOVIES_SCHEMA, wkProjSchema, j1Schema,
+                    bm, query.scratchFileId("bnl-outer-0"), N);
+
+            // ---- Join 2: Join1 ⋈ People on personId -------------------------
+            Map<String, Integer> j2_ = new LinkedHashMap<>();
+            j2_.put("movieId",  9);
+            j2_.put("title",   30);
+            j2_.put("personId", 10);
+            j2_.put("name",   105);
+            Map<String, Integer> j2Schema = Collections.unmodifiableMap(j2_);
+
+            Join join2 = new Join(
+                    join1, peopleScan,
+                    "personId", "personId",
+                    j1Schema, PEOPLE_SCHEMA, j2Schema,
+                    bm, query.scratchFileId("bnl-outer-1"), N);
+
+            // ---- Final pipelined projection: → {title, name} ----------------
+            Map<String, Integer> out_ = new LinkedHashMap<>();
+            out_.put("title", 30);
+            out_.put("name", 105);
+            Map<String, Integer> outSchema = Collections.unmodifiableMap(out_);
+
+            Project finalProj = new Project(join2, outSchema);
+
+            // ---- Execute -----------------------------------------------------
+            long resultCount = 0;
+            try {
+                finalProj.open();
+                // BufferedWriter collects small writes in memory and sends them
+                // to the file in larger batches, avoiding a disk write for every
+                // field or row. newBufferedWriter creates or overwrites
+                // query_results.csv by default.
+                try (BufferedWriter writer = Files.newBufferedWriter(
+                        query.outputPath(), StandardCharsets.UTF_8)) {
+                    GenericRecord result;
+                    while ((result = finalProj.next()) != null) {
+                        String title = new String(result.getFieldBytes("title")).trim();
+                        String name  = new String(result.getFieldBytes("name")).trim();
+                        writer.write(title);
+                        writer.write(',');
+                        writer.write(name);
+                        writer.newLine();
+                        resultCount++;
+                    }
+                }
+            } finally {
+                // Safe even when open() failed partway: every operator releases
+                // its own resources on a failed open and tolerates close() in
+                // that state.
                 finalProj.close();
             }
-            query.cleanup();
-        }
 
-        return resultCount;
+            return resultCount;
+        } catch (Throwable t) {
+            queryFailure = t;
+            throw t;
+        } finally {
+            // Cleanup starts before any per-query file id is created or
+            // registered, so plan-construction failures cannot leak state into
+            // a caller-provided, long-lived BufferManager.
+            try {
+                query.cleanup();
+            } catch (RuntimeException cleanupFailure) {
+                if (queryFailure == null) {
+                    throw cleanupFailure;
+                }
+                // Keep the query's own failure primary (cleanup throwing here
+                // is typically a symptom of it, e.g. a page the failed query
+                // left pinned).
+                queryFailure.addSuppressed(cleanupFailure);
+            }
+        }
     }
 
     /**
