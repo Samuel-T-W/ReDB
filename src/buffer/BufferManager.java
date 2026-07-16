@@ -3,12 +3,16 @@ package buffer;
 import catalog.CatalogEntry;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -72,6 +76,14 @@ public class BufferManager {
 	// the same catalog more than once without harm.
 	public void register(CatalogEntry entry) {
 		catalog.put(entry.fileName(), entry);
+	}
+
+	// Remove a table or index from the system catalog. Per-query temp tables
+	// are unregistered on the query's close path so a long-lived shared
+	// manager's catalog does not accumulate dead entries. Removing an absent
+	// entry is harmless.
+	public void unregister(String fileName) {
+		catalog.remove(fileName);
 	}
 
 	public CatalogEntry getCatalogEntry(String fileName) {
@@ -300,6 +312,70 @@ public class BufferManager {
 		}
 	}
 
+	/**
+	 * Drops every buffered page of the given file from the pool, freeing its
+	 * frames for reuse, and forgets the file's page-id allocation state. For
+	 * per-query temp and scratch files whose pages are dead once the query
+	 * closes; discarded dirty pages are deliberately NOT written back, since
+	 * the file itself is about to be deleted.
+	 *
+	 * <p>The caller must be done with the file: every page of it must already
+	 * be unpinned (throws IllegalStateException otherwise), and no concurrent
+	 * getPage/createPage calls for this fileId may race with the discard. The
+	 * one concurrent interaction that is tolerated is another thread's
+	 * eviction flush of one of this file's pages (any thread may evict an
+	 * unpinned dirty page): the discard waits for the file's in-flight
+	 * loads/flushes to drain and re-checks, so on return the pool holds no
+	 * frame, page-table entry, or in-flight I/O for the fileId. Call this
+	 * BEFORE deleting the file, or a draining flush could recreate it.
+	 */
+	public void discardFile(String fileId) {
+		while (true) {
+			List<CompletableFuture<?>> inFlight = new ArrayList<>();
+			globalLock.lock();
+			try {
+				Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
+				while (iter.hasNext()) {
+					Map.Entry<PageKey, Integer> entry = iter.next();
+					if (!entry.getKey().fileId().equals(fileId))
+						continue;
+					Frame frame = bufferPool[entry.getValue()];
+					if (frame.pinCount > 0) {
+						throw new IllegalStateException(
+								"Cannot discard file with pinned page: " + entry.getKey());
+					}
+					iter.remove();
+					frame.clear();
+					freeFrameIndices.add(frame.frameIndex);
+				}
+				for (Map.Entry<PageKey, CompletableFuture<Page>> entry : inFlightLoads.entrySet()) {
+					if (entry.getKey().fileId().equals(fileId))
+						inFlight.add(entry.getValue());
+				}
+				for (Map.Entry<PageKey, CompletableFuture<Void>> entry : inFlightFlushes.entrySet()) {
+					if (entry.getKey().fileId().equals(fileId))
+						inFlight.add(entry.getValue());
+				}
+			} finally {
+				globalLock.unlock();
+			}
+			if (inFlight.isEmpty())
+				break;
+			// wait outside the lock, then re-check: a drained load re-adds its
+			// page to the pageTable, a drained flush does not
+			for (CompletableFuture<?> future : inFlight) {
+				awaitQuietly(future);
+			}
+		}
+
+		fileStatesLock.lock();
+		try {
+			fileStates.remove(fileId);
+		} finally {
+			fileStatesLock.unlock();
+		}
+	}
+
 	/** HELPER FUNCTIONS SECTIONS */
 
 	/**
@@ -438,6 +514,25 @@ public class BufferManager {
 		} finally {
 			globalLock.unlock();
 		}
+	}
+
+	// For testing only: distinct fileIds with at least one page in the pool
+	public Set<String> bufferedFileIds() {
+		globalLock.lock();
+		try {
+			Set<String> fileIds = new HashSet<>();
+			for (PageKey pageKey : pageTable.keySet()) {
+				fileIds.add(pageKey.fileId());
+			}
+			return fileIds;
+		} finally {
+			globalLock.unlock();
+		}
+	}
+
+	// For testing only
+	public Set<String> catalogFileNames() {
+		return Set.copyOf(catalog.keySet());
 	}
 
 	// For testing only

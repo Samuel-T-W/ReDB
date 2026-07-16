@@ -89,7 +89,7 @@ public class RunQuery {
             throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
-        QueryContext query = QueryContext.create(outputPath);
+        QueryContext query = QueryContext.create(bm, outputPath);
 
         // ---- WorkedOn projection schema: {movieId, personId} ----------------
         Map<String, Integer> wkProj_ = new LinkedHashMap<>();
@@ -213,18 +213,22 @@ public class RunQuery {
     private static final class QueryContext {
         private static final String TEMP_PREFIX = ".redb-query-";
 
+        private final BufferManager bm;
         private final String runId;
         private final Path outputPath;
         private final List<Path> tempFiles;
+        private final List<String> fileIds;
 
-        private QueryContext(String runId, Path outputPath) {
+        private QueryContext(BufferManager bm, String runId, Path outputPath) {
+            this.bm = bm;
             this.runId = runId;
             this.outputPath = outputPath;
             this.tempFiles = new ArrayList<>();
+            this.fileIds = new ArrayList<>();
         }
 
-        static QueryContext create(Path outputPath) {
-            return new QueryContext(UUID.randomUUID().toString(), outputPath);
+        static QueryContext create(BufferManager bm, Path outputPath) {
+            return new QueryContext(bm, UUID.randomUUID().toString(), outputPath);
         }
 
         Path outputPath() {
@@ -234,14 +238,26 @@ public class RunQuery {
         String tempFileId(String label, String extension) {
             Path path = Path.of(TEMP_PREFIX + runId + "-" + label + extension);
             tempFiles.add(path);
+            fileIds.add(path.toString());
             return path.toString();
         }
 
         String scratchFileId(String label) {
-            return TEMP_PREFIX + runId + "-" + label;
+            String fileId = TEMP_PREFIX + runId + "-" + label;
+            fileIds.add(fileId);
+            return fileId;
         }
 
         void cleanup() {
+            // Drop this query's dead pages from the shared pool and its temp
+            // table from the catalog BEFORE deleting the files: discardFile
+            // waits out a concurrent eviction flush that could otherwise
+            // recreate a just-deleted temp file. It also asserts none of the
+            // query's pages are still pinned, so a pin leak fails loudly here.
+            for (String fileId : fileIds) {
+                bm.discardFile(fileId);
+                bm.unregister(fileId);
+            }
             for (Path tempFile : tempFiles) {
                 try {
                     Files.deleteIfExists(tempFile);

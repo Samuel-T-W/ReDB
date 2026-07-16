@@ -420,6 +420,65 @@ public class BufferManagerTest {
 	}
 
 	@Test
+	public void testUnregisterRemovesCatalogEntry() {
+		// Goal: unregister removes exactly the named entry; removing an absent
+		// entry is a harmless no-op (per-query cleanup may run more than once).
+		assertNotNull(bm.getCatalogEntry(fileOneName));
+		bm.unregister(fileOneName);
+		assertNull(bm.getCatalogEntry(fileOneName));
+		assertDoesNotThrow(() -> bm.unregister(fileOneName));
+	}
+
+	@Test
+	public void testDiscardFileFreesFramesAndForgetsPageIds() throws Exception {
+		// Goal: discardFile drops every buffered page of the file, returns the
+		// frames to the free list, and resets page-id allocation (a scratch
+		// fileId has no backing file, so ids restart at 0 after discard).
+		String scratchId = "discard-scratch";
+		Page pageA = bm.createPage(scratchId, null);
+		Page pageB = bm.createPage(scratchId, null);
+		assertEquals(0, pageA.getPid());
+		assertEquals(1, pageB.getPid());
+		bm.unpinPage(scratchId, pageA.getPid());
+		bm.unpinPage(scratchId, pageB.getPid());
+
+		bm.discardFile(scratchId);
+
+		assertFalse(bm.bufferedFileIds().contains(scratchId), "no pages of the file may remain buffered");
+		assertEquals(3, bm.getFreeFrameCount(), "discarded frames must return to the free list");
+		assertEquals(0, bm.createPage(scratchId, null).getPid(), "page ids restart once the file is forgotten");
+	}
+
+	@Test
+	public void testDiscardFileLeavesOtherFilesAlone() throws Exception {
+		// Goal: discarding one file must not touch another file's pages or pins.
+		String scratchId = "discard-scratch-other";
+		Page scratch = bm.createPage(scratchId, null);
+		bm.unpinPage(scratchId, scratch.getPid());
+		bm.getPage(fileOneName, 0); // stays pinned across the discard
+
+		bm.discardFile(scratchId);
+
+		assertTrue(bm.bufferedFileIds().contains(fileOneName));
+		assertEquals(1, bm.getPinCount(fileOneName, 0));
+		bm.unpinPage(fileOneName, 0);
+	}
+
+	@Test
+	public void testDiscardFileThrowsOnPinnedPage() throws Exception {
+		// Goal: discarding a file whose page is still pinned is a caller bug and
+		// must fail loudly instead of yanking an in-use frame.
+		String scratchId = "discard-pinned";
+		Page page = bm.createPage(scratchId, null); // pinned by createPage
+		assertThrows(IllegalStateException.class, () -> bm.discardFile(scratchId));
+
+		// once unpinned, the same discard succeeds
+		bm.unpinPage(scratchId, page.getPid());
+		assertDoesNotThrow(() -> bm.discardFile(scratchId));
+		assertFalse(bm.bufferedFileIds().contains(scratchId));
+	}
+
+	@Test
 	public void testFullPageInsertion() {
 		// Goal: confirm page-full detection and append-only page allocation.
 		// Spec mapping: "Only the last page can have free space."
