@@ -60,18 +60,36 @@ public class RunQuery {
             String endRange,
             int bufferSize,
             boolean useIndex) throws IOException {
+        BufferManager bm = new BufferManager(bufferSize);
+        registerCatalog(bm);
+        return run(startRange, endRange, bufferSize, useIndex, bm, Path.of(QUERY_RESULTS));
+    }
+
+    /**
+     * Runs the query against a caller-provided BufferManager, writing results to
+     * the given path. The base tables and index must already be registered on the
+     * manager (see {@link #registerCatalog}); only the per-query temp table is
+     * registered here.
+     *
+     * @param frameBudget
+     *            Frames this query may use for its BNL blocks; it only drives the
+     *            block-size computation, not pool construction (the pool size is
+     *            whatever the injected manager was built with).
+     */
+    public static long run(
+            String startRange,
+            String endRange,
+            int frameBudget,
+            boolean useIndex,
+            BufferManager bm,
+            Path outputPath) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
-        int N = (bufferSize - 1) / 2;
+        int N = (frameBudget - 1) / 2;
         if (N < 1) {
             throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
-        QueryContext query = QueryContext.create();
-        BufferManager bm = new BufferManager(bufferSize);
-        bm.register(new TableEntry(MOVIES_DB,    MOVIES_SCHEMA));
-        bm.register(new TableEntry(WORKEDON_DB,  WORKEDON_SCHEMA));
-        bm.register(new TableEntry(PEOPLE_DB,    PEOPLE_SCHEMA));
-        bm.register(new IndexEntry(TITLE_IDX,    MOVIES_SCHEMA.get("title")));
+        QueryContext query = QueryContext.create(outputPath);
 
         // ---- WorkedOn projection schema: {movieId, personId} ----------------
         Map<String, Integer> wkProj_ = new LinkedHashMap<>();
@@ -180,6 +198,18 @@ public class RunQuery {
         return resultCount;
     }
 
+    /**
+     * Registers the three base tables and the title index in the manager's
+     * catalog. Safe to call more than once: re-registering the same entry just
+     * overwrites it with an identical one.
+     */
+    public static void registerCatalog(BufferManager bm) {
+        bm.register(new TableEntry(MOVIES_DB,    MOVIES_SCHEMA));
+        bm.register(new TableEntry(WORKEDON_DB,  WORKEDON_SCHEMA));
+        bm.register(new TableEntry(PEOPLE_DB,    PEOPLE_SCHEMA));
+        bm.register(new IndexEntry(TITLE_IDX,    MOVIES_SCHEMA.get("title")));
+    }
+
     private static final class QueryContext {
         private static final String TEMP_PREFIX = ".redb-query-";
 
@@ -193,8 +223,8 @@ public class RunQuery {
             this.tempFiles = new ArrayList<>();
         }
 
-        static QueryContext create() {
-            return new QueryContext(UUID.randomUUID().toString(), Path.of(QUERY_RESULTS));
+        static QueryContext create(Path outputPath) {
+            return new QueryContext(UUID.randomUUID().toString(), outputPath);
         }
 
         Path outputPath() {
