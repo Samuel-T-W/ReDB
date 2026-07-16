@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -39,6 +40,9 @@ public class ConcurrentQueryStressTest {
 	// data pages the queries touch, so eviction contention stays constant.
 	private static final int SHARED_POOL_SIZE = 96;
 	private static final int QUERY_FRAME_BUDGET = 9;
+
+	private static final Set<String> BASE_FILES =
+			Set.of("movies.db", "workedon.db", "people.db", "title.idx");
 
 	// Title ranges over the dataset loaded by PreProcessor. Several overlap so
 	// concurrent queries hit the same base-table pages.
@@ -140,6 +144,117 @@ public class ConcurrentQueryStressTest {
 			pool.shutdownNow();
 		}
 		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
+	}
+
+	// ----------------------
+	// End-to-end through QueryEngine, the real user-facing path: admission
+	// control queues excess queries, per-query budgets share the pool, and the
+	// per-query cleanup keeps the pool and catalog free of dead entries.
+	// ----------------------
+
+	@RepeatedTest(3)
+	public void concurrentMixedQueriesThroughEngineMatchBaseline() throws Exception {
+		// 36 frames / 4 permits = budget 9, so half of the 8 submissions must
+		// queue for admission while scan and index queries share the pool.
+		QueryEngine engine = new QueryEngine(36, 4);
+
+		List<List<String>> baselines = new ArrayList<>();
+		for (int i = 0; i < RANGES.length; i++) {
+			baselines.add(computeBaseline(i, useIndexFor(i)));
+		}
+
+		ExecutorService pool = Executors.newFixedThreadPool(RANGES.length);
+		try {
+			List<Future<List<String>>> futures = new ArrayList<>();
+			for (int i = 0; i < RANGES.length; i++) {
+				final int q = i;
+				futures.add(pool.submit(() -> {
+					Path out = tempDir.resolve(
+							"engine-e2e-" + q + "-" + System.nanoTime() + ".csv");
+					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					return sortedRows(out);
+				}));
+			}
+			// get() rethrows worker exceptions in the test thread
+			for (int i = 0; i < futures.size(); i++) {
+				assertEquals(baselines.get(i), futures.get(i).get(), "rows for range " + i);
+			}
+		} finally {
+			pool.shutdownNow();
+		}
+
+		BufferManager shared = engine.getBufferManager();
+		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
+		assertTrue(BASE_FILES.containsAll(shared.bufferedFileIds()),
+				"only base-table/index pages may remain in the pool, found: " + shared.bufferedFileIds());
+		assertEquals(BASE_FILES, shared.catalogFileNames(),
+				"catalog must hold exactly the base entries after all queries");
+	}
+
+	@Test
+	public void printSerialVsConcurrentEngineTiming() throws Exception {
+		// Throughput sanity check, deliberately NOT asserted: CI machines vary
+		// too much for a hard bound. Prints wall time for the 8 mixed queries
+		// run one at a time versus all submitted at once, on identically sized
+		// fresh engines (a warm-up pass first levels the OS file cache).
+		runAllThroughEngine(new QueryEngine(72, 8), false);
+
+		long serialStart = System.nanoTime();
+		runAllThroughEngine(new QueryEngine(72, 8), false);
+		long serialMillis = (System.nanoTime() - serialStart) / 1_000_000;
+
+		long concurrentStart = System.nanoTime();
+		runAllThroughEngine(new QueryEngine(72, 8), true);
+		long concurrentMillis = (System.nanoTime() - concurrentStart) / 1_000_000;
+
+		System.out.printf("QueryEngine timing for %d mixed queries: serial %d ms, concurrent %d ms%n",
+				RANGES.length, serialMillis, concurrentMillis);
+	}
+
+	/** Runs all ranges through the engine, one at a time or all at once. */
+	private void runAllThroughEngine(QueryEngine engine, boolean concurrent) throws Exception {
+		if (!concurrent) {
+			for (int i = 0; i < RANGES.length; i++) {
+				Path out = tempDir.resolve("engine-serial-" + i + "-" + System.nanoTime() + ".csv");
+				engine.runQuery(RANGES[i][0], RANGES[i][1], useIndexFor(i), out);
+			}
+			return;
+		}
+		ExecutorService pool = Executors.newFixedThreadPool(RANGES.length);
+		try {
+			List<Future<?>> futures = new ArrayList<>();
+			for (int i = 0; i < RANGES.length; i++) {
+				final int q = i;
+				futures.add(pool.submit(() -> {
+					Path out = tempDir.resolve(
+							"engine-timed-" + q + "-" + System.nanoTime() + ".csv");
+					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					return null;
+				}));
+			}
+			for (Future<?> f : futures) {
+				f.get(); // rethrows worker exceptions in the test thread
+			}
+		} finally {
+			pool.shutdownNow();
+		}
+	}
+
+	// Mixed access methods so scan and index queries share the pool at once
+	private static boolean useIndexFor(int queryIndex) {
+		return queryIndex % 2 == 1;
+	}
+
+	/** Runs one range serially on a fresh private manager. */
+	private static List<String> computeBaseline(int rangeIndex, boolean useIndex) throws IOException {
+		BufferManager bm = new BufferManager(SHARED_POOL_SIZE);
+		RunQuery.registerCatalog(bm);
+		Path out = tempDir.resolve("baseline-mixed-" + rangeIndex + "-" + System.nanoTime() + ".csv");
+		RunQuery.run(RANGES[rangeIndex][0], RANGES[rangeIndex][1], QUERY_FRAME_BUDGET, useIndex, bm, out);
+		List<String> rows = sortedRows(out);
+		// Guard against a vacuous pass: every range must select some rows
+		assertFalse(rows.isEmpty(), "baseline for range " + rangeIndex + " is empty");
+		return rows;
 	}
 
 	/** Runs every range serially, each on a fresh private manager. */

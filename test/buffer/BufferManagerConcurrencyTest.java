@@ -166,10 +166,14 @@ public class BufferManagerConcurrencyTest {
 		// Goal: after heavy concurrent get/dirty/unpin churn with constant
 		// eviction, pool accounting still holds: no lost frames, no pin leaks,
 		// and every page still carries its fingerprint (no stale or torn loads).
+		// The pool must have at least one frame per thread: each thread holds at
+		// most one pinned (or mid-load claimed) frame at a time, so with fewer
+		// frames than threads "all frames pinned" is a legitimate outcome, not
+		// a bug. numPages > poolSize keeps eviction constant regardless.
 		final int threads = 8;
 		final int iterations = 400;
 		final int numPages = 12;
-		final int poolSize = 6;
+		final int poolSize = 8;
 		String fileName = createFingerprintFile(numPages);
 		BufferManager bm = new BufferManager(poolSize);
 		bm.register(new TableEntry(fileName, SCHEMA));
