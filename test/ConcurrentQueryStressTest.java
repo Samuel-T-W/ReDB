@@ -14,7 +14,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -31,9 +30,14 @@ import org.junit.jupiter.api.io.TempDir;
  */
 public class ConcurrentQueryStressTest {
 
-	// Deliberately small shared pool so concurrent queries constantly contend
-	// on eviction; each query gets a frame budget of 9 (BNL N = 4 block pages).
-	private static final int SHARED_POOL_SIZE = 40;
+	// Each query gets a frame budget of 9 (BNL N = 4 block pages). A query's
+	// worst-case simultaneous pins are 2N block pages (both joins hold their
+	// blocks at once) plus one transient scan/index pin, i.e. 9. There is no
+	// admission control yet, so the pool must cover the worst case of all 8
+	// queries at peak (72 pinned frames) or "all frames pinned" is a legitimate
+	// outcome. 96 frames leaves that headroom while staying far below the ~200
+	// data pages the queries touch, so eviction contention stays constant.
+	private static final int SHARED_POOL_SIZE = 96;
 	private static final int QUERY_FRAME_BUDGET = 9;
 
 	// Title ranges over the dataset loaded by PreProcessor. Several overlap so
@@ -84,13 +88,11 @@ public class ConcurrentQueryStressTest {
 	// Concurrent runs: one thread per query on the shared manager
 	// ----------------------
 
-	@Disabled("BufferManager is not yet thread safe; enabled in the thread-safety commits")
 	@RepeatedTest(3)
 	public void concurrentQueriesOnSharedManagerMatchBaselineScan() throws Exception {
 		assertConcurrentSharedMatchesBaseline(false);
 	}
 
-	@Disabled("BufferManager is not yet thread safe; enabled in the thread-safety commits")
 	@RepeatedTest(3)
 	public void concurrentQueriesOnSharedManagerMatchBaselineIndex() throws Exception {
 		assertConcurrentSharedMatchesBaseline(true);

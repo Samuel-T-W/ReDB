@@ -9,6 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 import storage.*;
 
@@ -17,16 +19,22 @@ public class BufferManager {
 	// configurable size of buffer cache.
 	final int bufferSize;
 
-	private Map<String, CatalogEntry> catalog;
+	private final Map<String, CatalogEntry> catalog;
 	private Map<String, FileState> fileStates = new HashMap<>();
 	private final ReentrantLock fileStatesLock = new ReentrantLock();
 	private Map<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
 	private Queue<Integer> freeFrameIndices;
 
+	// Coarse global lock guarding all buffer pool state: pageTable (including
+	// its LRU order), bufferPool frames (pin counts, dirty flags, contents),
+	// and freeFrameIndices. Disk I/O currently also happens while holding it;
+	// moving I/O out of the lock is deliberate follow-up work.
+	private final ReentrantLock globalLock = new ReentrantLock();
+
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
-	private long readIOCount = 0;
-	private long writeIOCount = 0;
+	private final LongAdder readIOCount = new LongAdder();
+	private final LongAdder writeIOCount = new LongAdder();
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
@@ -34,7 +42,7 @@ public class BufferManager {
 		this.bufferPool = new Frame[bufferSize];
 		this.freeFrameIndices = new LinkedList<>();
 
-		this.catalog = new HashMap<>();
+		this.catalog = new ConcurrentHashMap<>();
 
 		initializeBufferManager();
 	}
@@ -46,7 +54,9 @@ public class BufferManager {
 		}
 	}
 
-	// Register a table or index in the system catalog
+	// Register a table or index in the system catalog. Idempotent: re-registering
+	// a file just overwrites its entry, so shared-manager callers can register
+	// the same catalog more than once without harm.
 	public void register(CatalogEntry entry) {
 		catalog.put(entry.fileName(), entry);
 	}
@@ -69,31 +79,36 @@ public class BufferManager {
 	public Page getPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
 
-		// get from buffer pool
-		if (pageTable.containsKey(pageKey)) {
-			movePageToBottomOfLru(pageKey);
-			Frame frame = this.bufferPool[pageTable.get(pageKey)];
-			frame.pinCount++;
-			return frame.page;
+		globalLock.lock();
+		try {
+			// get from buffer pool
+			if (pageTable.containsKey(pageKey)) {
+				movePageToBottomOfLru(pageKey);
+				Frame frame = this.bufferPool[pageTable.get(pageKey)];
+				frame.pinCount++;
+				return frame.page;
+			}
+
+			// cache miss → disk load
+			readIOCount.increment();
+
+			// load from file
+			byte[] loaded_data = null;
+
+			try (RandomAccessFile raf = new RandomAccessFile(fileId, "r")) {
+				int offset = RawPage.getOffset(pageId);
+				raf.seek(offset);
+				loaded_data = new byte[RawPage.MAX_PAGE_LEN];
+				raf.readFully(loaded_data);
+			}
+
+			RawPage page = new RawPage(pageId);
+			page.fillPageData(loaded_data);
+
+			return addToFrame(pageKey, page, true);
+		} finally {
+			globalLock.unlock();
 		}
-
-		// cache miss → disk load
-		readIOCount++;
-
-		// load from file
-		byte[] loaded_data = null;
-
-		try (RandomAccessFile raf = new RandomAccessFile(fileId, "r")) {
-			int offset = RawPage.getOffset(pageId);
-			raf.seek(offset);
-			loaded_data = new byte[RawPage.MAX_PAGE_LEN];
-			raf.readFully(loaded_data);
-		}
-
-		RawPage page = new RawPage(pageId);
-		page.fillPageData(loaded_data);
-
-		return addToFrame(pageKey, page, true);
 	}
 
 	/** Returns the FileState for the given file, creating it on first use. */
@@ -133,7 +148,12 @@ public class BufferManager {
 			page.fillPageData(data);
 		}
 
-		addToFrame(pageKey, page, true);
+		globalLock.lock();
+		try {
+			addToFrame(pageKey, page, true);
+		} finally {
+			globalLock.unlock();
+		}
 		return page;
 	}
 
@@ -148,13 +168,18 @@ public class BufferManager {
 	 */
 	public void markDirty(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Integer frameIndex = pageTable.get(pageKey);
-		if (frameIndex == null) {
-			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
-		}
-		Frame frame = bufferPool[frameIndex];
-		if (frame.hasPage()) {
-			frame.isDirty = true;
+		globalLock.lock();
+		try {
+			Integer frameIndex = pageTable.get(pageKey);
+			if (frameIndex == null) {
+				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
+			}
+			Frame frame = bufferPool[frameIndex];
+			if (frame.hasPage()) {
+				frame.isDirty = true;
+			}
+		} finally {
+			globalLock.unlock();
 		}
 	}
 
@@ -168,34 +193,47 @@ public class BufferManager {
 	 */
 	public void unpinPage(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Integer frameIndex = pageTable.get(pageKey);
-		if (frameIndex == null) {
-			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
+		globalLock.lock();
+		try {
+			Integer frameIndex = pageTable.get(pageKey);
+			if (frameIndex == null) {
+				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
+			}
+			Frame frame = bufferPool[frameIndex];
+			if (frame.pinCount > 0)
+				frame.pinCount--;
+		} finally {
+			globalLock.unlock();
 		}
-		Frame frame = bufferPool[frameIndex];
-		if (frame.pinCount > 0)
-			frame.pinCount--;
 	}
 
 	/** Forces all dirty pages currently in memory to be written back to disk. */
 	public void force() throws IOException {
-		Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
-		while (iter.hasNext()) {
-			Map.Entry<PageKey, Integer> entry = iter.next();
-			Frame frame = bufferPool[entry.getValue()];
-			if (!frame.isDirty)
-				continue;
+		globalLock.lock();
+		try {
+			Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
+			while (iter.hasNext()) {
+				Map.Entry<PageKey, Integer> entry = iter.next();
+				Frame frame = bufferPool[entry.getValue()];
+				if (!frame.isDirty)
+					continue;
 
-			// if dirty: write to disk and clear dirty flag
-			PageKey pageKey = entry.getKey();
-			writePageToDisk(pageKey.fileId(), frame.page);
-			frame.isDirty = false;
+				// if dirty: write to disk and clear dirty flag
+				PageKey pageKey = entry.getKey();
+				writePageToDisk(pageKey.fileId(), frame.page);
+				frame.isDirty = false;
+			}
+		} finally {
+			globalLock.unlock();
 		}
 	}
 
 	/** HELPER FUNCTIONS SECTIONS */
 
-	/** Evicts a page from the buffer pool and throws if all frames are pinned. */
+	/**
+	 * Evicts a page from the buffer pool and throws if all frames are pinned.
+	 * Must be called with globalLock held.
+	 */
 	private void evict() throws RuntimeException, IOException {
 
 		// loop and grab lru page thats unpinned
@@ -222,7 +260,7 @@ public class BufferManager {
 
 	/** Write a page to disk. */
 	private void writePageToDisk(String fileId, Page page) throws IOException {
-		writeIOCount++;
+		writeIOCount.increment();
 		try (RandomAccessFile raf = new RandomAccessFile(fileId, "rw")) {
 			int offset = RawPage.getOffset(page.getPid());
 			raf.seek(offset);
@@ -230,6 +268,7 @@ public class BufferManager {
 		}
 	}
 
+	/** Places a page into a free frame, evicting if needed. Must be called with globalLock held. */
 	private Page addToFrame(PageKey pageKey, Page page, boolean is_pinned) throws IOException, IllegalStateException {
 
 		// attempt eviction if buffer is full
@@ -277,43 +316,58 @@ public class BufferManager {
 		pageTable.put(pageKey, index);
 	}
 
-	public void resetIOCounts() { readIOCount = 0; writeIOCount = 0; }
-	public long getReadIOCount()  { return readIOCount;  }
-	public long getWriteIOCount() { return writeIOCount; }
-	public long getTotalIOCount() { return readIOCount + writeIOCount; }
+	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); }
+	public long getReadIOCount()  { return readIOCount.sum();  }
+	public long getWriteIOCount() { return writeIOCount.sum(); }
+	public long getTotalIOCount() { return readIOCount.sum() + writeIOCount.sum(); }
 
 	// For testing only
 	public int[] listPageID() {
-		int[] pageID = new int[pageTable.size()];
-		Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
-		int i = 0;
-		while (iter.hasNext()) {
-			Map.Entry<PageKey, Integer> entry = iter.next();
-			pageID[i] = this.bufferPool[entry.getValue()].page.getPid();
-			i++;
+		globalLock.lock();
+		try {
+			int[] pageID = new int[pageTable.size()];
+			Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
+			int i = 0;
+			while (iter.hasNext()) {
+				Map.Entry<PageKey, Integer> entry = iter.next();
+				pageID[i] = this.bufferPool[entry.getValue()].page.getPid();
+				i++;
+			}
+			return pageID;
+		} finally {
+			globalLock.unlock();
 		}
-		return pageID;
 	}
 
 	// For testing only
 	public int getTotalPinCount() {
-		int total = 0;
-		for (Integer frameIndex : pageTable.values()) {
-			total += bufferPool[frameIndex].pinCount;
+		globalLock.lock();
+		try {
+			int total = 0;
+			for (Integer frameIndex : pageTable.values()) {
+				total += bufferPool[frameIndex].pinCount;
+			}
+			return total;
+		} finally {
+			globalLock.unlock();
 		}
-		return total;
 	}
 
 	// For testing only
 	public int getPinCount(String fileId, int pid) {
 		PageKey pageKey = new PageKey(fileId, pid);
 
-		// get from buffer pool
-		if (pageTable.containsKey(pageKey)) {
-			Frame frame = this.bufferPool[pageTable.get(pageKey)];
-			return frame.pinCount;
-		} else {
-			return -1;
+		globalLock.lock();
+		try {
+			// get from buffer pool
+			if (pageTable.containsKey(pageKey)) {
+				Frame frame = this.bufferPool[pageTable.get(pageKey)];
+				return frame.pinCount;
+			} else {
+				return -1;
+			}
+		} finally {
+			globalLock.unlock();
 		}
 	}
 }
