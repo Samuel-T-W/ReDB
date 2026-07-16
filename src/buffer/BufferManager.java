@@ -296,6 +296,15 @@ public class BufferManager {
 	}
 
 	// For testing only
+	public int getTotalPinCount() {
+		int total = 0;
+		for (Integer frameIndex : pageTable.values()) {
+			total += bufferPool[frameIndex].pinCount;
+		}
+		return total;
+	}
+
+	// For testing only
 	public int getPinCount(String fileId, int pid) {
 		PageKey pageKey = new PageKey(fileId, pid);
 
