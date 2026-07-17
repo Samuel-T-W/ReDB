@@ -86,6 +86,21 @@ export const ITERATIONS: Iteration[] = [
   {
     id: 3,
     version: "v3",
+    name: "General read-only query planner",
+    tagline: "Replace the fixed BNL plan with a cost-based planner over a real (if limited) query surface.",
+    status: "planned",
+    explanation: [
+      {
+        title: "Why",
+        body: "The engine currently runs one hardcoded 3-table plan. This iteration reuses an existing SQL parser (a limited clause subset, not a from-scratch grammar) and adds a planner that picks access path (seq scan vs. B+ tree) and join order/algorithm by cost, instead of following one fixed shape.",
+      },
+    ],
+    plannedSummary:
+      "Foundational for everything after it: the self-describing catalog and the interactive query box both need general query support to exist first.",
+  },
+  {
+    id: 4,
+    version: "v4",
     name: "Self-describing catalog",
     tagline: "Store table schemas inside the engine instead of in compiled code.",
     status: "planned",
@@ -97,6 +112,21 @@ export const ITERATIONS: Iteration[] = [
     ],
     plannedSummary:
       "Move table schemas out of compiled constants into a system catalog stored as a heap file in the engine itself (SQLite-style fixed bootstrap page), and separate logical table name from on-disk file name.",
+  },
+  {
+    id: 5,
+    version: "v5",
+    name: "Interactive query box",
+    tagline: "Let visitors run their own queries against the planner, live, on the website.",
+    status: "planned",
+    explanation: [
+      {
+        title: "Why",
+        body: "Replaying a fixed preset trace only shows one query. Once the general planner exists, visitors can type their own query (within the supported clause subset) and watch it get planned and traced in real time.",
+      },
+    ],
+    plannedSummary:
+      "Depends on v3's general query planner. Replaces the current trace-replay-only demo with a real query input.",
   },
 ];
 
