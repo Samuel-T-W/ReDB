@@ -2,9 +2,11 @@
 
 **[web page →](https://samuel-t-w.github.io/ReDB/)**
 
-A relational database storage and query engine built from scratch in Java. ReDB implements the core machinery that sits underneath a real database — paged disk storage, a buffer pool with its own eviction policy, a B+ tree index, and a pull-based query executor with block nested loop joins — without leaning on any existing database libraries.
+A relational, **read-only** database storage and query engine built from scratch in Java. ReDB implements the core machinery that sits underneath a real database — paged disk storage, a buffer pool with its own eviction policy, a B+ tree index, and a pull-based query executor with block nested loop joins — without leaning on any existing database libraries.
 
 It's a study in how databases actually work below the SQL layer: every byte on disk, every page in memory, and every record that flows through a query is managed by code in this repo.
+
+ReDB deliberately stops short of a full read+write database (transactions, recovery, general inserts/updates/deletes). Instead it goes deep on one thing: query planning and execution performance for reads, iteration by iteration. See [Roadmap](#roadmap).
 
 ## What's implemented
 
@@ -32,6 +34,7 @@ It's a study in how databases actually work below the SQL layer: every byte on d
 - Pull-based iterator model: every operator implements `open()` / `next()` / `close()`, and a parent drives its children one record at a time.
 - Operators: sequential scan, index scan (via the B+ tree), selection, projection, and **block nested loop join**.
 - BNL join keeps an in-memory hash table per block and sizes its blocks against the available buffer frames, materializing intermediate results to a temp file through the buffer manager.
+- **Currently a single hardcoded plan** (see *Using the engine* below). A general planner that picks access path and join order/algorithm by cost is next on the roadmap.
 
 ## Architecture
 
@@ -115,9 +118,19 @@ ReDB operates on fixed-length records loaded from CSV. The engine was developed 
 
 Data files are not committed to this repository; place your own CSVs in `data/` before running `pre_process`.
 
+## Roadmap
+
+ReDB is read-only by design and grows through a sequence of engine iterations, each one adding depth to query planning or execution performance rather than breadth of features:
+
+1. **Single-threaded engine** *(done)* — page storage, LRU buffer pool, B+ tree index, pull-based executor.
+2. **Read-concurrency** — safe concurrent reads (thread-safe buffer manager, admission-controlled query engine). Read-only means no writer/reader conflicts and no latch coupling for splits under concurrent access.
+3. **General read-only query planner** — replace the fixed BNL plan with a planner over a reused SQL parser (a limited clause subset) that chooses access path and join order/algorithm by cost.
+4. **Self-describing catalog** — table schemas stored inside the engine itself instead of hardcoded constants.
+5. **Interactive query box on the website** — run your own query against the planner and watch it execute, live.
+
 ## Limitations
 
-ReDB is an educational engine, not a production database. By design it is single-threaded, supports fixed-length records only, has no transactions or recovery, no deletions in the B+ tree, and one file per table. Page and record IDs are 32-bit ints, capping files at ~2 GB.
+ReDB is an educational engine, not a production database. By design it is read-only, single-threaded (until the read-concurrency iteration lands), supports fixed-length records only, has no transactions or recovery, no deletions in the B+ tree, and one file per table. Page and record IDs are 32-bit ints, capping files at ~2 GB.
 
 ## License
 
