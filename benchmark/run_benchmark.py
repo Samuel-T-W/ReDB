@@ -26,6 +26,8 @@ from reporting import (
 
 
 DATABASE_FILES = ("movies.db", "workedon.db", "people.db")
+BENCHMARK_PROTOCOL_VERSION = 1
+EXECUTION_MODE = "legacy_multi_jvm"
 
 
 class Workload(TypedDict):
@@ -359,6 +361,11 @@ def main() -> int:
         "run_id": run_id,
         "run_label": args.run_label or "",
         "run_created_at_utc": run_created_at,
+        "git_commit": git_value(root, "rev-parse", "HEAD") or "unknown",
+        "git_describe": git_value(root, "describe", "--always", "--tags") or "unknown",
+        "git_dirty": bool(git_value(root, "status", "--porcelain")),
+        "benchmark_protocol_version": BENCHMARK_PROTOCOL_VERSION,
+        "execution_mode": EXECUTION_MODE,
     }
 
     summary_context = {
@@ -407,6 +414,11 @@ def main() -> int:
         "run_id",
         "run_label",
         "run_created_at_utc",
+        "git_commit",
+        "git_describe",
+        "git_dirty",
+        "benchmark_protocol_version",
+        "execution_mode",
         "started_at_utc",
         "concurrency",
         "repetition",
@@ -437,8 +449,11 @@ def main() -> int:
         "run_id": run_id,
         "run_label": args.run_label or "",
         "created_at_utc": run_created_at,
-        "git_commit": git_value(root, "rev-parse", "HEAD"),
-        "git_dirty": bool(git_value(root, "status", "--porcelain")),
+        "git_commit": run_context["git_commit"],
+        "git_describe": run_context["git_describe"],
+        "git_dirty": run_context["git_dirty"],
+        "benchmark_protocol_version": BENCHMARK_PROTOCOL_VERSION,
+        "execution_mode": EXECUTION_MODE,
         "platform": platform.platform(),
         "hostname": platform.node(),
         "logical_cpu_count": os.cpu_count(),
