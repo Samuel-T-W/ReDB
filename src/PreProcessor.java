@@ -37,6 +37,11 @@ public class PreProcessor {
     private static final int BUFFER_SIZE = 100;
 
     public static void run() throws IOException {
+        run(MOVIES_CSV, WORKEDON_CSV, PEOPLE_CSV);
+    }
+
+    /** Loads tables and the title index from the supplied CSV fixtures. */
+    public static void run(String moviesCsv, String workedonCsv, String peopleCsv) throws IOException {
         PreProcessorUtils.resetFile(MOVIES_DB);
         PreProcessorUtils.resetFile(WORKEDON_DB);
         PreProcessorUtils.resetFile(PEOPLE_DB);
@@ -48,13 +53,13 @@ public class PreProcessor {
         bm.register(new TableEntry(PEOPLE_DB, PEOPLE_SCHEMA));
         bm.register(new IndexEntry(TITLE_IDX, MOVIES_SCHEMA.get("title")));
 
-        int moviesPages = PreProcessorUtils.loadTable(bm, MOVIES_CSV, MOVIES_DB, MOVIES_SCHEMA);
+        int moviesPages = PreProcessorUtils.loadTable(bm, moviesCsv, MOVIES_DB, MOVIES_SCHEMA);
         System.out.println("Movies loaded: " + moviesPages + " page(s)");
 
-        int workedonPages = PreProcessorUtils.loadTable(bm, WORKEDON_CSV, WORKEDON_DB, WORKEDON_SCHEMA);
+        int workedonPages = PreProcessorUtils.loadTable(bm, workedonCsv, WORKEDON_DB, WORKEDON_SCHEMA);
         System.out.println("WorkedOn loaded: " + workedonPages + " page(s)");
 
-        int peoplePages = PreProcessorUtils.loadTable(bm, PEOPLE_CSV, PEOPLE_DB, PEOPLE_SCHEMA);
+        int peoplePages = PreProcessorUtils.loadTable(bm, peopleCsv, PEOPLE_DB, PEOPLE_SCHEMA);
         System.out.println("People loaded: " + peoplePages + " page(s)");
 
         PreProcessorUtils.buildIndex(
