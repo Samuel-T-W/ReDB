@@ -64,7 +64,7 @@ public class ConcurrentQueryStressTest {
 	static void loadTables() throws IOException {
 		// Same setup as the pre_process CLI command: load the three heap files
 		// and build the title index (per-record inserts, not bulk load).
-		PreProcessor.run();
+        SyntheticQueryFixtures.load();
 	}
 
 	@AfterAll

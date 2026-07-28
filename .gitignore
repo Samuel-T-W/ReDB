@@ -26,7 +26,10 @@ AGENTS.md
 
 # Course-distributed data not stored in Git (top-level IMDB CSVs only;
 # anchored so it doesn't swallow source dirs like web/src/data/).
-/data/
+/data/*
+!/data/fixtures/
+!/data/fixtures/synthetic/
+!/data/fixtures/synthetic/*.csv
 
 # School deliverables — design docs and reports (kept locally, not published)
 design-document.md

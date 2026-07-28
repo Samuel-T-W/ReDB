@@ -35,7 +35,7 @@ public class RunQueryFailureTest {
 		// Stale temp files from a previous crashed/failed run would trip the
 		// no-residue assertions below, so start from a clean slate.
 		deleteQueryTempFiles();
-		PreProcessor.run();
+        SyntheticQueryFixtures.load();
 	}
 
 	private static void deleteQueryTempFiles() {

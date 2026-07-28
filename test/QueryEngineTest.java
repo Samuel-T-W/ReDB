@@ -52,7 +52,7 @@ public class QueryEngineTest {
 
 	@BeforeAll
 	static void loadTables() throws IOException {
-		PreProcessor.run();
+        SyntheticQueryFixtures.load();
 	}
 
 	@AfterAll
