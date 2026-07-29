@@ -24,12 +24,12 @@ export default function IterationPage() {
   return (
     <div className="app-shell">
       <nav className="topbar">
-        <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="brand">
+        <Link to="/" className="brand">
           ReDB
         </Link>
         <IterationSlider currentId={iteration.id} />
         <div className="topbar-right">
-          <Link to="/planned" className="topbar-link">
+          <Link to="/" state={{ scrollTo: "roadmap" }} className="topbar-link">
             Planned work →
           </Link>
           <ThemeToggle />
@@ -81,7 +81,7 @@ export default function IterationPage() {
                   {iteration.plannedSummary ??
                     "This iteration is on the roadmap. The live demo appears here once it ships."}
                 </p>
-                <Link to="/planned" className="btn primary">
+                <Link to="/" state={{ scrollTo: "roadmap" }} className="btn primary">
                   See planned work
                 </Link>
               </div>

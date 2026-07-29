@@ -38,10 +38,10 @@ CI runs `npm test` and `npm run build` on every push and PR (see `.github/workfl
 
 ```
 src/
-  App.tsx                 # routes: /iteration/:id and /planned
+  App.tsx                 # routes: / and /iteration/:id
   components/
+    Home.tsx              # what ReDB aims to be, plus the roadmap section
     IterationPage.tsx     # one engine iteration: header, demo, side panels
-    PlannedWork.tsx       # roadmap list of all iterations
     demo/                 # the live query-replay player and its panels
   data/
     iterations.ts         # one entry per engine iteration

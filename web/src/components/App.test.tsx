@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "../App";
-import { LATEST_IMPLEMENTED } from "../data/iterations";
+import { ITERATIONS, LATEST_IMPLEMENTED } from "../data/iterations";
 
 function renderAt(path: string) {
   return render(
@@ -13,18 +13,14 @@ function renderAt(path: string) {
 }
 
 describe("App routing", () => {
-  it("redirects the root path to the latest implemented iteration", () => {
+  it("renders the home page at the root path", () => {
     renderAt("/");
-    expect(
-      screen.getByRole("heading", { level: 1, name: LATEST_IMPLEMENTED.name }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: /read-only query engine/i })).toBeInTheDocument();
   });
 
-  it("redirects unknown paths to the latest iteration", () => {
+  it("redirects unknown paths to the home page", () => {
     renderAt("/nope/123");
-    expect(
-      screen.getByRole("heading", { level: 1, name: LATEST_IMPLEMENTED.name }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: /read-only query engine/i })).toBeInTheDocument();
   });
 
   it("renders the live demo on an implemented iteration", () => {
@@ -38,10 +34,31 @@ describe("App routing", () => {
     expect(screen.getByRole("heading", { name: "Not built yet" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Run query" })).not.toBeInTheDocument();
   });
+});
 
-  it("lists every iteration on the planned-work page", () => {
-    renderAt("/planned");
-    const main = screen.getByRole("main");
-    expect(within(main).getByText(/Concurrency/)).toBeInTheDocument();
+describe("Home page", () => {
+  it("explains the read-only aim of the engine", () => {
+    renderAt("/");
+    const aim = screen.getByRole("region", { name: "What ReDB is trying to be" });
+    expect(within(aim).getByRole("heading", { name: "Read-only, on purpose" })).toBeInTheDocument();
+    expect(
+      within(aim).getByRole("heading", { name: "General queries, not one fixed plan" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lists every iteration in the roadmap section", () => {
+    renderAt("/");
+    const roadmap = screen.getByRole("region", { name: "Planned work" });
+    for (const iteration of ITERATIONS) {
+      expect(within(roadmap).getByRole("heading", { name: iteration.name })).toBeInTheDocument();
+    }
+  });
+
+  it("links to the live demo of the latest implemented iteration", () => {
+    renderAt("/");
+    expect(screen.getByRole("link", { name: /Open the live demo/ })).toHaveAttribute(
+      "href",
+      `/iteration/${LATEST_IMPLEMENTED.id}`,
+    );
   });
 });

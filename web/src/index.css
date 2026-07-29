@@ -1206,3 +1206,43 @@ footer {
   margin: 0 0 14px;
   max-width: 700px;
 }
+
+/* ============ Home page ============ */
+/* The hero and section blocks are the shared landing styles above, retuned for
+   the narrower rhythm inside .app-shell. */
+.home-hero {
+  padding: 72px 0 56px;
+  /* The shared .hero glow is sized for a full-bleed section; inside the shell it
+     would cut off at the content edge, so re-aim it to fade out well inside. */
+  background: radial-gradient(760px 380px at 50% -12%, var(--accent-tint), transparent 60%);
+}
+.home-hero .eyebrow {
+  margin-bottom: 14px;
+}
+.home-section {
+  padding: 48px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+}
+.home-section .eyebrow {
+  margin-bottom: 10px;
+}
+/* Two across rather than four: these cards carry a paragraph each, and four
+   columns leaves them tall, narrow, and ragged along the bottom edge. */
+.home-section .cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+}
+.home-section .planned-list {
+  margin-top: 28px;
+}
+@media (max-width: 720px) {
+  .hero h1 {
+    font-size: 36px;
+  }
+  .hero .lede {
+    font-size: 17px;
+  }
+  .home-hero {
+    padding: 48px 0 40px;
+  }
+}
