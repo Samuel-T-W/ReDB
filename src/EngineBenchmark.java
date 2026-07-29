@@ -1,5 +1,6 @@
 import buffer.BufferManager;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -246,6 +247,14 @@ public final class EngineBenchmark {
                 runFailure.addSuppressed(cleanupFailure);
             }
         }
+    }
+
+    public static void main(String[] args) {
+        BenchmarkCli.main(args);
+    }
+
+    static void printMetrics(RunSummary summary, PrintStream out) {
+        BenchmarkCli.printMetrics(summary, out);
     }
 
     private static Map<SequentialBaselines.Spec, List<String>> computeBaselines(
