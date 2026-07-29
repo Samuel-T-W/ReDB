@@ -98,4 +98,22 @@ describe("Home page", () => {
       `/iteration/${LATEST_IMPLEMENTED.id}`,
     );
   });
+
+  it("offers a jump link for each of its sections", () => {
+    renderAt("/");
+    const nav = screen.getByRole("navigation", { name: "Sections of this page" });
+    for (const label of ["Overview", "The aim", "Roadmap"]) {
+      expect(within(nav).getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("carries the iteration stepper with no iteration marked as current", () => {
+    renderAt("/");
+    const steps = screen.getByRole("navigation", { name: "Engine iterations" });
+    for (const iteration of ITERATIONS) {
+      expect(
+        within(steps).getByRole("link", { name: new RegExp(iteration.version, "i") }),
+      ).not.toHaveAttribute("aria-current");
+    }
+  });
 });

@@ -803,6 +803,10 @@ footer {
   align-items: center;
   gap: 7px;
   padding: 0 6px;
+  text-decoration: none;
+}
+.iter-step:hover {
+  text-decoration: none;
 }
 /* connector segment running from this step's dot to the next */
 .iter-step::before {
@@ -1170,6 +1174,47 @@ footer {
 }
 
 /* ============ Home page ============ */
+/* Section nav — pins to the top once the topbar scrolls away, so the jump
+   links stay reachable down the length of the page. */
+.section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  gap: 4px;
+  padding: 10px 0;
+  background: var(--bg);
+  /* A soft edge rather than a rule: the sections already carry border-tops, and
+     two hard lines a few pixels apart read as one thick smudge after a jump. */
+  box-shadow: 0 10px 14px -12px rgba(0, 0, 0, 0.45);
+}
+.section-link {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.section-link:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.section-link.on {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+/* Land a jumped-to section flush under the sticky nav, so its border-top reads
+   as the nav's own divider. Matches .section-nav's height. */
+.home-hero,
+.home-section {
+  scroll-margin-top: 50px;
+}
+
 /* The hero and section blocks are the shared landing styles above, retuned for
    the narrower rhythm inside .app-shell. */
 .home-hero {

@@ -1,7 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { ITERATIONS, LATEST_IMPLEMENTED } from "../data/iterations";
+import IterationSlider from "./IterationSlider";
 import ThemeToggle from "./ThemeToggle";
+
+const SECTIONS = [
+  { id: "overview", label: "Overview" },
+  { id: "aim", label: "The aim" },
+  { id: "roadmap", label: "Roadmap" },
+];
+
+function scrollToSection(id: string) {
+  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+}
 
 // What the engine is reaching for, as opposed to what any one iteration ships.
 const AIMS = [
@@ -38,16 +49,35 @@ const BADGES = [
 
 export default function Home() {
   const location = useLocation();
-  const roadmap = useRef<HTMLElement>(null);
+  const [active, setActive] = useState(SECTIONS[0].id);
 
   // Other pages link here with state instead of a fragment, since hash routing
   // already owns the URL fragment.
   useEffect(() => {
     const state = location.state as { scrollTo?: string } | null;
-    if (state?.scrollTo === "roadmap") {
-      roadmap.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-    }
+    if (state?.scrollTo) scrollToSection(state.scrollTo);
   }, [location.state]);
+
+  // Keep the section nav in step with what the visitor is actually looking at.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible) setActive(visible.target.id);
+      },
+      // Only the band below the sticky nav counts as "in view", so the active
+      // link changes as a section reaches the top rather than as it appears.
+      { rootMargin: "-50px 0px -60% 0px" },
+    );
+    for (const s of SECTIONS) {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div className="app-shell">
@@ -55,6 +85,7 @@ export default function Home() {
         <Link to="/" className="brand">
           ReDB
         </Link>
+        <IterationSlider />
         <div className="topbar-right">
           <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="topbar-link">
             Simulation →
@@ -63,7 +94,20 @@ export default function Home() {
         </div>
       </nav>
 
-      <header className="hero home-hero">
+      <nav className="section-nav" aria-label="Sections of this page">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            className={`section-link${active === s.id ? " on" : ""}`}
+            aria-current={active === s.id ? "true" : undefined}
+            onClick={() => scrollToSection(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+
+      <header className="hero home-hero" id="overview">
         <p className="eyebrow">Storage + query engine · Java</p>
         <h1>A read-only query engine, built from scratch.</h1>
         <p className="lede">
@@ -95,7 +139,7 @@ export default function Home() {
       </header>
 
       <main className="iter-main">
-        <section className="home-section" aria-labelledby="aim-heading">
+        <section className="home-section" id="aim" aria-labelledby="aim-heading">
           <p className="eyebrow">The aim</p>
           <h2 id="aim-heading">What ReDB is trying to be</h2>
           <p className="section-sub">
@@ -114,7 +158,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="home-section" ref={roadmap} aria-labelledby="roadmap-heading">
+        <section className="home-section" id="roadmap" aria-labelledby="roadmap-heading">
           <p className="eyebrow">Roadmap</p>
           <h2 id="roadmap-heading">Planned work</h2>
           <p className="section-sub">
