@@ -3,11 +3,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import buffer.BufferManager;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -103,7 +100,10 @@ public class ConcurrentQueryStressTest {
 	}
 
 	private void assertSequentialSharedMatchesBaseline(boolean useIndex) throws IOException {
-		List<List<String>> baselines = computeBaselines(useIndex);
+		List<List<String>> baselines = new ArrayList<>();
+		for (int i = 0; i < RANGES.length; i++) {
+			baselines.add(computeBaseline(i, useIndex));
+		}
 
 		BufferManager shared = new BufferManager(SHARED_POOL_SIZE);
 		RunQuery.registerCatalog(shared);
@@ -113,13 +113,19 @@ public class ConcurrentQueryStressTest {
 		for (int i = 0; i < RANGES.length; i++) {
 			Path out = tempDir.resolve("seq-" + useIndex + "-" + i + ".csv");
 			RunQuery.run(RANGES[i][0], RANGES[i][1], QUERY_FRAME_BUDGET, useIndex, shared, out);
-			assertEquals(baselines.get(i), sortedRows(out), "rows for range " + i);
+			assertEquals(
+					baselines.get(i),
+					SequentialBaselines.sortedRows(out),
+					"rows for range " + i);
 		}
 		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
 	}
 
 	private void assertConcurrentSharedMatchesBaseline(boolean useIndex) throws Exception {
-		List<List<String>> baselines = computeBaselines(useIndex);
+		List<List<String>> baselines = new ArrayList<>();
+		for (int i = 0; i < RANGES.length; i++) {
+			baselines.add(computeBaseline(i, useIndex));
+		}
 
 		BufferManager shared = new BufferManager(SHARED_POOL_SIZE);
 		RunQuery.registerCatalog(shared);
@@ -133,7 +139,7 @@ public class ConcurrentQueryStressTest {
 					Path out = tempDir.resolve(
 							"concurrent-" + useIndex + "-" + q + "-" + System.nanoTime() + ".csv");
 					RunQuery.run(RANGES[q][0], RANGES[q][1], QUERY_FRAME_BUDGET, useIndex, shared, out);
-					return sortedRows(out);
+					return SequentialBaselines.sortedRows(out);
 				}));
 			}
 			// get() rethrows worker exceptions in the test thread
@@ -172,7 +178,7 @@ public class ConcurrentQueryStressTest {
 					Path out = tempDir.resolve(
 							"engine-e2e-" + q + "-" + System.nanoTime() + ".csv");
 					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
-					return sortedRows(out);
+					return SequentialBaselines.sortedRows(out);
 				}));
 			}
 			// get() rethrows worker exceptions in the test thread
@@ -247,35 +253,16 @@ public class ConcurrentQueryStressTest {
 
 	/** Runs one range serially on a fresh private manager. */
 	private static List<String> computeBaseline(int rangeIndex, boolean useIndex) throws IOException {
-		BufferManager bm = new BufferManager(SHARED_POOL_SIZE);
-		RunQuery.registerCatalog(bm);
 		Path out = tempDir.resolve("baseline-mixed-" + rangeIndex + "-" + System.nanoTime() + ".csv");
-		RunQuery.run(RANGES[rangeIndex][0], RANGES[rangeIndex][1], QUERY_FRAME_BUDGET, useIndex, bm, out);
-		List<String> rows = sortedRows(out);
+		List<String> rows = SequentialBaselines.compute(
+				new SequentialBaselines.Spec(
+						RANGES[rangeIndex][0], RANGES[rangeIndex][1], useIndex),
+				SHARED_POOL_SIZE,
+				QUERY_FRAME_BUDGET,
+				out);
 		// Guard against a vacuous pass: every range must select some rows
 		assertFalse(rows.isEmpty(), "baseline for range " + rangeIndex + " is empty");
 		return rows;
 	}
 
-	/** Runs every range serially, each on a fresh private manager. */
-	private static List<List<String>> computeBaselines(boolean useIndex) throws IOException {
-		List<List<String>> baselines = new ArrayList<>();
-		for (int i = 0; i < RANGES.length; i++) {
-			BufferManager bm = new BufferManager(SHARED_POOL_SIZE);
-			RunQuery.registerCatalog(bm);
-			Path out = tempDir.resolve("baseline-" + useIndex + "-" + i + "-" + System.nanoTime() + ".csv");
-			RunQuery.run(RANGES[i][0], RANGES[i][1], QUERY_FRAME_BUDGET, useIndex, bm, out);
-			List<String> rows = sortedRows(out);
-			// Guard against a vacuous pass: every range must select some rows
-			assertFalse(rows.isEmpty(), "baseline for range " + i + " is empty");
-			baselines.add(rows);
-		}
-		return baselines;
-	}
-
-	private static List<String> sortedRows(Path out) throws IOException {
-		List<String> rows = new ArrayList<>(Files.readAllLines(out, StandardCharsets.UTF_8));
-		Collections.sort(rows);
-		return rows;
-	}
 }
