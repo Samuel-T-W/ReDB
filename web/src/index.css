@@ -924,6 +924,7 @@ footer {
 }
 .iter-actions {
   display: flex;
+  align-items: center;
   gap: 12px;
   margin-top: 20px;
   flex-wrap: wrap;
@@ -935,10 +936,43 @@ footer {
   color: var(--text);
   box-shadow: 0 4px 14px var(--accent-glow);
 }
-.action-btn.active {
-  background: var(--accent-tint);
-  border-color: var(--accent);
-  color: var(--accent);
+.iter-source {
+  margin-left: auto;
+}
+
+/* view tabs — the panel below swaps in place, so these read as a segmented
+   control over one surface rather than as three separate actions */
+.iter-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border-bright);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 3px;
+  gap: 3px;
+}
+.iter-tab {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.iter-tab:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.iter-tab.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.iter-tab.on:hover {
+  background: var(--accent);
+  filter: brightness(1.06);
 }
 .iter-main {
   margin-top: 4px;
@@ -961,85 +995,12 @@ footer {
   line-height: 1.6;
 }
 
-/* side panel — fixed drawer that overlays the page; the demo never reflows */
-.iter-content {
-  min-width: 0;
-}
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  z-index: 40;
-  animation: fadein 0.2s ease;
-}
-.side-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 50;
-  width: 400px;
-  max-width: 92vw;
-  height: 100vh;
-  background: var(--panel);
-  border-left: 1px solid var(--border-bright);
-  box-shadow: var(--shadow-pop);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: slidein 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadein {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes slidein {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-.side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.side-head h3 {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--text);
-  text-transform: none;
-  letter-spacing: 0;
-  margin: 0;
-}
-.side-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 4px 8px;
-}
-.side-close:hover {
-  color: var(--text);
-}
-.side-body {
-  padding: 18px;
-  overflow-y: auto;
-}
-
+/* explain + performance panels — these swap in place of the simulation, so they
+   get the full content width rather than a 400px drawer */
 .explain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
 }
 .explain-card {
   background: var(--bg-2);
@@ -1062,19 +1023,27 @@ footer {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
-  margin: 0 0 10px;
+  margin: 0 0 22px;
+  max-width: 780px;
 }
 .perf-headline {
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.65;
-  margin: 0 0 16px;
+  font-size: 18px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+  max-width: 780px;
+}
+.perf-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
+  align-items: start;
 }
 .perf-highlights {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
 }
 .perf-highlight {
   background: var(--bg-2);
@@ -1129,12 +1098,13 @@ footer {
   font-family: var(--mono);
 }
 .perf-takeaways {
-  margin: 16px 0;
+  margin: 0 0 18px;
   padding-left: 18px;
   color: var(--muted);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  font-size: 14px;
 }
 .perf-takeaways li {
   line-height: 1.55;
@@ -1142,14 +1112,6 @@ footer {
 .perf-link {
   display: inline-flex;
   align-items: center;
-  width: 100%;
-  justify-content: center;
-  margin-top: 4px;
-}
-@media (max-width: 520px) {
-  .perf-highlights {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* planned work list */

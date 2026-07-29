@@ -57,7 +57,7 @@ export default function Home() {
         </Link>
         <div className="topbar-right">
           <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="topbar-link">
-            Live demo →
+            Simulation →
           </Link>
           <ThemeToggle />
         </div>
@@ -74,7 +74,7 @@ export default function Home() {
         </p>
         <div className="cta">
           <Link className="btn primary" to={`/iteration/${LATEST_IMPLEMENTED.id}`}>
-            Open the live demo →
+            Open the simulation →
           </Link>
           <a
             className="btn"
@@ -119,7 +119,7 @@ export default function Home() {
           <h2 id="roadmap-heading">Planned work</h2>
           <p className="section-sub">
             ReDB started as a UMass CS 645 storage-engine project and continues as a personal
-            learning project. Each iteration adds a layer you can watch in the demo.
+            learning project. Each iteration adds a layer you can watch in the simulation.
           </p>
           <ol className="planned-list">
             {ITERATIONS.map((it) => (
@@ -136,7 +136,7 @@ export default function Home() {
                   <p>{it.plannedSummary ?? it.tagline}</p>
                   {it.status === "implemented" ? (
                     <Link to={`/iteration/${it.id}`} className="btn primary">
-                      Open live demo →
+                      Open simulation →
                     </Link>
                   ) : (
                     <Link to={`/iteration/${it.id}`} className="btn">

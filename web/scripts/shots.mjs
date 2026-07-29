@@ -27,11 +27,11 @@ for (const { name, launcher } of engines) {
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-iteration.png` });
 
-  await page.getByRole("button", { name: "How it works" }).click();
+  await page.getByRole("tab", { name: "How it works" }).click();
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-explain.png` });
 
-  await page.getByRole("button", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Performance" }).click();
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-performance.png` });
 

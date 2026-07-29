@@ -1,9 +1,10 @@
 # ReDB Showcase
 
 An interactive web page for the ReDB storage engine.
-Each engine iteration gets a page; the implemented ones embed a live, step-through demo of a query running through the buffer pool, B+ tree index, and block nested-loop joins.
+Each engine iteration gets a page; the implemented ones embed a step-through simulation of a query running through the buffer pool, B+ tree index, and block nested-loop joins.
+It is called a simulation rather than a demo because it replays a trace rather than driving the engine.
 
-The demo currently replays a **generated** `QueryTrace` (see `src/data/generateTrace.ts`) that conforms to the Java trace schema in `src/trace/*.java`.
+The simulation currently replays a **generated** `QueryTrace` (see `src/data/generateTrace.ts`) that conforms to the Java trace schema in `src/trace/*.java`.
 The invented numbers are internally consistent and respond to the controls (title range, buffer size, scan vs. index), so the UI already behaves the way the real engine will once committed engine traces drop in.
 
 ## Stack
