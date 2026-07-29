@@ -33,6 +33,10 @@
   --r-data: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Heights of the two sticky bars. Anything that pins or scrolls into view
+     below them offsets against these. */
+  --topbar-h: 84px;
+  --section-nav-h: 58px;
 }
 
 :root[data-theme="light"] {
@@ -726,20 +730,29 @@ footer {
   font-style: italic;
 }
 
-/* ============ Multi-page shell (iterations + planned) ============ */
+/* ============ Multi-page shell (iterations + home) ============ */
 .app-shell {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 16px 24px 48px;
+  /* No top padding: the topbar is sticky and owns its own, so nothing can
+     scroll through the gap above it. */
+  padding: 0 24px 48px;
   min-height: 100vh;
 }
 
+/* The brand and the version stepper stay reachable from anywhere on the page,
+   so the topbar pins. --topbar-h is what everything below it offsets against;
+   keep it in step with this rule's height. */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--topbar-h);
   display: flex;
   align-items: center;
   gap: 24px;
   justify-content: space-between;
-  padding: 8px 0 16px;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .brand {
@@ -1178,21 +1191,22 @@ footer {
    links stay reachable down the length of the page. */
 .section-nav {
   position: sticky;
-  top: 0;
+  top: var(--topbar-h);
   z-index: 30;
+  height: var(--section-nav-h);
   display: flex;
-  gap: 4px;
-  padding: 10px 0;
+  align-items: center;
+  gap: 6px;
   background: var(--bg);
   /* A soft edge rather than a rule: the sections already carry border-tops, and
      two hard lines a few pixels apart read as one thick smudge after a jump. */
-  box-shadow: 0 10px 14px -12px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.3);
 }
 .section-link {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
-  padding: 7px 14px;
+  padding: 10px 20px;
   border: none;
   border-radius: 999px;
   background: none;
@@ -1208,11 +1222,11 @@ footer {
   color: var(--accent);
   background: var(--accent-tint);
 }
-/* Land a jumped-to section flush under the sticky nav, so its border-top reads
-   as the nav's own divider. Matches .section-nav's height. */
+/* Land a jumped-to section flush under both sticky bars, so its border-top
+   reads as the section nav's own divider rather than doubling up with one. */
 .home-hero,
 .home-section {
-  scroll-margin-top: 50px;
+  scroll-margin-top: calc(var(--topbar-h) + var(--section-nav-h));
 }
 
 /* The hero and section blocks are the shared landing styles above, retuned for

@@ -6,7 +6,7 @@ import ThemeToggle from "./ThemeToggle";
 
 const SECTIONS = [
   { id: "overview", label: "Overview" },
-  { id: "aim", label: "The aim" },
+  { id: "goal", label: "Goal" },
   { id: "roadmap", label: "Roadmap" },
 ];
 
@@ -15,7 +15,7 @@ function scrollToSection(id: string) {
 }
 
 // What the engine is reaching for, as opposed to what any one iteration ships.
-const AIMS = [
+const GOALS = [
   {
     n: "01",
     title: "Read-only, on purpose",
@@ -68,9 +68,9 @@ export default function Home() {
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
         if (visible) setActive(visible.target.id);
       },
-      // Only the band below the sticky nav counts as "in view", so the active
+      // Only the band below the sticky bars counts as "in view", so the active
       // link changes as a section reaches the top rather than as it appears.
-      { rootMargin: "-50px 0px -60% 0px" },
+      { rootMargin: "-142px 0px -55% 0px" },
     );
     for (const s of SECTIONS) {
       const el = document.getElementById(s.id);
@@ -87,9 +87,6 @@ export default function Home() {
         </Link>
         <IterationSlider />
         <div className="topbar-right">
-          <Link to={`/iteration/${LATEST_IMPLEMENTED.id}`} className="topbar-link">
-            Simulation →
-          </Link>
           <ThemeToggle />
         </div>
       </nav>
@@ -139,20 +136,20 @@ export default function Home() {
       </header>
 
       <main className="iter-main">
-        <section className="home-section" id="aim" aria-labelledby="aim-heading">
-          <p className="eyebrow">The aim</p>
-          <h2 id="aim-heading">What ReDB is trying to be</h2>
+        <section className="home-section" id="goal" aria-labelledby="goal-heading">
+          <p className="eyebrow">The goal</p>
+          <h2 id="goal-heading">What ReDB is trying to be</h2>
           <p className="section-sub">
             A general read-only query database: you hand it a query, it decides how to answer it,
             and every layer it uses to get there is visible. Building the read path properly is a
             deeper problem than it looks, and it is the whole project.
           </p>
           <div className="cards">
-            {AIMS.map((aim) => (
-              <div className="card" key={aim.n}>
-                <div className="n">{aim.n}</div>
-                <h3>{aim.title}</h3>
-                <p>{aim.body}</p>
+            {GOALS.map((goal) => (
+              <div className="card" key={goal.n}>
+                <div className="n">{goal.n}</div>
+                <h3>{goal.title}</h3>
+                <p>{goal.body}</p>
               </div>
             ))}
           </div>

@@ -74,12 +74,14 @@ describe("Iteration view tabs", () => {
 });
 
 describe("Home page", () => {
-  it("explains the read-only aim of the engine", () => {
+  it("explains the read-only goal of the engine", () => {
     renderAt("/");
-    const aim = screen.getByRole("region", { name: "What ReDB is trying to be" });
-    expect(within(aim).getByRole("heading", { name: "Read-only, on purpose" })).toBeInTheDocument();
+    const goal = screen.getByRole("region", { name: "What ReDB is trying to be" });
     expect(
-      within(aim).getByRole("heading", { name: "General queries, not one fixed plan" }),
+      within(goal).getByRole("heading", { name: "Read-only, on purpose" }),
+    ).toBeInTheDocument();
+    expect(
+      within(goal).getByRole("heading", { name: "General queries, not one fixed plan" }),
     ).toBeInTheDocument();
   });
 
@@ -102,7 +104,7 @@ describe("Home page", () => {
   it("offers a jump link for each of its sections", () => {
     renderAt("/");
     const nav = screen.getByRole("navigation", { name: "Sections of this page" });
-    for (const label of ["Overview", "The aim", "Roadmap"]) {
+    for (const label of ["Overview", "Goal", "Roadmap"]) {
       expect(within(nav).getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
