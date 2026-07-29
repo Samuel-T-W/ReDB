@@ -10,17 +10,24 @@ type Tab = "sim" | "explain" | "perf";
 export default function IterationPage() {
   const { id } = useParams();
   const iteration = getIteration(Number(id));
-  const [tab, setTab] = useState<Tab>("sim");
+  const [tab, setTab] = useState<Tab>(iteration?.status === "implemented" ? "sim" : "explain");
 
   if (!iteration) {
     return <Navigate to={`/iteration/${LATEST_IMPLEMENTED.id}`} replace />;
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "sim", label: "Simulation" },
+  // A planned iteration has nothing to simulate and no numbers, so it is left
+  // with How it works alone — and a lone tab is a dead control, so the strip
+  // only appears once there is more than one view to switch between.
+  const views: { id: Tab; label: string }[] = [
+    ...(iteration.status === "implemented" ? [{ id: "sim" as const, label: "Simulation" }] : []),
     { id: "explain", label: "How it works" },
     ...(iteration.performance ? [{ id: "perf" as const, label: "Performance" }] : []),
   ];
+  const tabbed = views.length > 1;
+  // Sliding from an implemented iteration onto a planned one keeps this
+  // component mounted, so the remembered tab may no longer exist here.
+  const active = views.some((v) => v.id === tab) ? tab : views[0].id;
 
   return (
     <div className="app-shell">
@@ -45,21 +52,23 @@ export default function IterationPage() {
         </div>
         <p className="iter-tagline">{iteration.tagline}</p>
         <div className="iter-actions">
-          <div className="iter-tabs" role="tablist" aria-label="Iteration view">
-            {tabs.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                id={`tab-${t.id}`}
-                aria-selected={tab === t.id}
-                aria-controls={`panel-${t.id}`}
-                className={`iter-tab${tab === t.id ? " on" : ""}`}
-                onClick={() => setTab(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          {tabbed && (
+            <div className="iter-tabs" role="tablist" aria-label="Iteration view">
+              {views.map((v) => (
+                <button
+                  key={v.id}
+                  role="tab"
+                  id={`tab-${v.id}`}
+                  aria-selected={active === v.id}
+                  aria-controls={`panel-${v.id}`}
+                  className={`iter-tab${active === v.id ? " on" : ""}`}
+                  onClick={() => setTab(v.id)}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          )}
           <a
             className="btn action-btn iter-source"
             href="https://github.com/Samuel-T-W/ReDB"
@@ -74,29 +83,29 @@ export default function IterationPage() {
       <main className="iter-main">
         {/* Every panel stays mounted so switching tabs never resets a replay
             that is part-way through. */}
-        <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={tab !== "sim"}>
-          {iteration.status === "implemented" ? (
+        {iteration.status === "implemented" && (
+          <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={active !== "sim"}>
             <DemoPlayer />
-          ) : (
-            <div className="planned-placeholder">
-              <h2>Not built yet</h2>
+          </div>
+        )}
+
+        <div
+          id="panel-explain"
+          role={tabbed ? "tabpanel" : undefined}
+          aria-labelledby={tabbed ? "tab-explain" : undefined}
+          hidden={active !== "explain"}
+        >
+          {iteration.status === "planned" && (
+            <div className="planned-note">
               <p>
                 {iteration.plannedSummary ??
                   "This iteration is on the roadmap. The simulation appears here once it ships."}
               </p>
-              <Link to="/" state={{ scrollTo: "roadmap" }} className="btn primary">
-                See planned work
+              <Link to="/" state={{ scrollTo: "roadmap" }} className="btn">
+                See the roadmap →
               </Link>
             </div>
           )}
-        </div>
-
-        <div
-          id="panel-explain"
-          role="tabpanel"
-          aria-labelledby="tab-explain"
-          hidden={tab !== "explain"}
-        >
           <div className="explain-list">
             {iteration.explanation.map((s) => (
               <div className="explain-card" key={s.title}>
@@ -108,7 +117,7 @@ export default function IterationPage() {
         </div>
 
         {iteration.performance && (
-          <div id="panel-perf" role="tabpanel" aria-labelledby="tab-perf" hidden={tab !== "perf"}>
+          <div id="panel-perf" role="tabpanel" aria-labelledby="tab-perf" hidden={active !== "perf"}>
             <p className="perf-headline">{iteration.performance.headline}</p>
             <p className="perf-blurb">{iteration.performance.blurb}</p>
             <div className="perf-highlights">

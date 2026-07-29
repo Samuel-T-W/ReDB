@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "../App";
-import { ITERATIONS, LATEST_IMPLEMENTED } from "../data/iterations";
+import { getIteration, ITERATIONS, LATEST_IMPLEMENTED } from "../data/iterations";
 
 function renderAt(path: string) {
   return render(
@@ -33,9 +33,13 @@ describe("App routing", () => {
     expect(screen.getByRole("button", { name: "▶ Run" })).toBeInTheDocument();
   });
 
-  it("shows a placeholder instead of the simulation for a planned iteration", () => {
+  it("leads a planned iteration with how it works, and no simulation", () => {
     renderAt("/iteration/2");
-    expect(screen.getByRole("heading", { name: "Not built yet" })).toBeInTheDocument();
+    const planned = getIteration(2)!;
+    expect(
+      screen.getByRole("heading", { name: planned.explanation[0].title }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(planned.plannedSummary!)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Run query" })).not.toBeInTheDocument();
   });
 });
@@ -66,10 +70,14 @@ describe("Iteration view tabs", () => {
     expect(screen.getByRole("heading", { name: "Run query" })).toBeInTheDocument();
   });
 
-  it("offers no performance tab for an iteration without benchmark data", () => {
+  it("drops the tab strip when a planned iteration has only one view", () => {
     renderAt("/iteration/2");
+    expect(screen.queryByRole("tab", { name: "Simulation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Performance" })).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "How it works" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "How it works" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tablist", { name: "Iteration view" }),
+    ).not.toBeInTheDocument();
   });
 });
 

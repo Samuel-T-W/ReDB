@@ -942,6 +942,7 @@ footer {
 .iter-actions {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-top: 20px;
   flex-wrap: wrap;
@@ -953,10 +954,6 @@ footer {
   color: var(--text);
   box-shadow: 0 4px 14px var(--accent-glow);
 }
-.iter-source {
-  margin-left: auto;
-}
-
 /* view tabs — the panel below swaps in place, so these read as a segmented
    control over one surface rather than as three separate actions */
 .iter-tabs {
@@ -995,20 +992,18 @@ footer {
   margin-top: 4px;
 }
 
-.planned-placeholder {
+/* What a planned iteration leads with, in place of a simulation it cannot run */
+.planned-note {
   border: 1px dashed var(--border-bright);
   border-radius: 14px;
-  padding: 56px 32px;
-  text-align: center;
+  padding: 22px 24px;
   background: var(--panel);
+  margin-bottom: 18px;
 }
-.planned-placeholder h2 {
-  font-size: 22px;
-}
-.planned-placeholder p {
+.planned-note p {
   color: var(--muted);
-  max-width: 580px;
-  margin: 12px auto 24px;
+  max-width: 760px;
+  margin: 0 0 16px;
   line-height: 1.6;
 }
 
@@ -1016,7 +1011,9 @@ footer {
    get the full content width rather than a 400px drawer */
 .explain-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  /* auto-fill, not auto-fit: a planned iteration has a single explanation card,
+     and auto-fit would collapse the empty track and stretch it edge to edge. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
   gap: 16px;
 }
 .explain-card {
