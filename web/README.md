@@ -41,13 +41,13 @@ CI runs `npm test` and `npm run build` on every push and PR (see `.github/workfl
 src/
   App.tsx                 # routes: / and /iteration/:id
   components/
-    Home.tsx              # what ReDB aims to be, plus the roadmap section
-    IterationPage.tsx     # one engine iteration: header, demo, side panels
-    demo/                 # the live query-replay player and its panels
+    Home.tsx              # the goal, plus the roadmap section
+    IterationPage.tsx     # one engine iteration: simulation / how it works / performance
+    demo/                 # the query-replay player and its panels
   data/
     iterations.ts         # one entry per engine iteration
-    presets.ts            # title-range and buffer-size presets the demo offers
-    generateTrace.ts      # builds a schema-valid QueryTrace from demo settings
+    presets.ts            # title-range and buffer-size presets the simulation offers
+    generateTrace.ts      # builds a schema-valid QueryTrace from the chosen settings
     replay.ts             # replays a trace up to a cursor into UI state
   types/trace.ts          # TypeScript mirror of the Java trace model
 ```

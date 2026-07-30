@@ -10,7 +10,11 @@ type Tab = "sim" | "explain" | "perf";
 export default function IterationPage() {
   const { id } = useParams();
   const iteration = getIteration(Number(id));
-  const [tab, setTab] = useState<Tab>(iteration?.status === "implemented" ? "sim" : "explain");
+  // Sliding between iterations keeps this component mounted, so the chosen view
+  // is remembered against the iteration it was chosen on. Landing on a
+  // different one opens on that iteration's own first view rather than
+  // inheriting a tab from the last.
+  const [chosen, setChosen] = useState<{ iterationId: number; tab: Tab } | null>(null);
 
   if (!iteration) {
     return <Navigate to={`/iteration/${LATEST_IMPLEMENTED.id}`} replace />;
@@ -25,9 +29,10 @@ export default function IterationPage() {
     ...(iteration.performance ? [{ id: "perf" as const, label: "Performance" }] : []),
   ];
   const tabbed = views.length > 1;
-  // Sliding from an implemented iteration onto a planned one keeps this
-  // component mounted, so the remembered tab may no longer exist here.
-  const active = views.some((v) => v.id === tab) ? tab : views[0].id;
+  const active =
+    chosen?.iterationId === iteration.id && views.some((v) => v.id === chosen.tab)
+      ? chosen.tab
+      : views[0].id;
 
   return (
     <div className="app-shell">
@@ -62,7 +67,7 @@ export default function IterationPage() {
                   aria-selected={active === v.id}
                   aria-controls={`panel-${v.id}`}
                   className={`iter-tab${active === v.id ? " on" : ""}`}
-                  onClick={() => setTab(v.id)}
+                  onClick={() => setChosen({ iterationId: iteration.id, tab: v.id })}
                 >
                   {v.label}
                 </button>

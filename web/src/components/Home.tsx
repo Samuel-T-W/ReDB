@@ -10,8 +10,18 @@ const SECTIONS = [
   { id: "roadmap", label: "Roadmap" },
 ];
 
+// Height of a sticky bar, read from the custom property that positions it, so
+// the JS offsets cannot drift from the CSS.
+function stickyHeight(name: string): number {
+  if (typeof getComputedStyle === "undefined") return 0;
+  return parseInt(getComputedStyle(document.documentElement).getPropertyValue(name), 10) || 0;
+}
+
 function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  document
+    .getElementById(id)
+    ?.scrollIntoView?.({ behavior: reduced ? "auto" : "smooth", block: "start" });
 }
 
 // What the engine is reaching for, as opposed to what any one iteration ships.
@@ -70,7 +80,9 @@ export default function Home() {
       },
       // Only the band below the sticky bars counts as "in view", so the active
       // link changes as a section reaches the top rather than as it appears.
-      { rootMargin: "-142px 0px -55% 0px" },
+      {
+        rootMargin: `-${stickyHeight("--topbar-h") + stickyHeight("--section-nav-h")}px 0px -55% 0px`,
+      },
     );
     for (const s of SECTIONS) {
       const el = document.getElementById(s.id);

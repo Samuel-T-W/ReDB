@@ -70,6 +70,18 @@ describe("Iteration view tabs", () => {
     expect(screen.getByRole("heading", { name: "Run query" })).toBeInTheDocument();
   });
 
+  it("opens each iteration on its own first view rather than the last one's tab", () => {
+    // Sliding between iterations keeps IterationPage mounted, so a tab chosen
+    // on one iteration must not follow you to the next.
+    renderAt("/iteration/2");
+    fireEvent.click(screen.getByRole("link", { name: /v1/i }));
+    expect(screen.getByRole("tab", { name: "Simulation" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Run query" })).toBeInTheDocument();
+  });
+
   it("drops the tab strip when a planned iteration has only one view", () => {
     renderAt("/iteration/2");
     expect(screen.queryByRole("tab", { name: "Simulation" })).not.toBeInTheDocument();
