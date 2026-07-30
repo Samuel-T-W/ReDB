@@ -1,15 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import Home from "./components/Home";
 import IterationPage from "./components/IterationPage";
-import PlannedWork from "./components/PlannedWork";
-import { LATEST_IMPLEMENTED } from "./data/iterations";
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to={`/iteration/${LATEST_IMPLEMENTED.id}`} replace />} />
+      <Route path="/" element={<Home />} />
       <Route path="/iteration/:id" element={<IterationPage />} />
-      <Route path="/planned" element={<PlannedWork />} />
-      <Route path="*" element={<Navigate to={`/iteration/${LATEST_IMPLEMENTED.id}`} replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

@@ -1,6 +1,6 @@
 // One entry per iteration of the engine. Implemented iterations get their own
-// page with a live demo; planned ones are listed on the Planned work page and
-// shown as a placeholder if you slide onto them.
+// page with a query simulation; planned ones are listed in the home page's
+// roadmap section and shown as a placeholder if you slide onto them.
 
 export interface ExplanationSection {
   title: string;

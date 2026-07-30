@@ -19,21 +19,21 @@ for (const { name, launcher } of engines) {
     reducedMotion: "reduce",
   });
 
+  await page.goto(`${BASE}/#/`, { waitUntil: "networkidle" });
+  await wait(400);
+  await page.screenshot({ path: `${OUT}${name}-home.png`, fullPage: true });
+
   await page.goto(`${BASE}/#/iteration/1`, { waitUntil: "networkidle" });
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-iteration.png` });
 
-  await page.getByRole("button", { name: "How it works" }).click();
+  await page.getByRole("tab", { name: "How it works" }).click();
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-explain.png` });
 
-  await page.getByRole("button", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Performance" }).click();
   await wait(500);
   await page.screenshot({ path: `${OUT}${name}-performance.png` });
-
-  await page.goto(`${BASE}/#/planned`, { waitUntil: "networkidle" });
-  await wait(400);
-  await page.screenshot({ path: `${OUT}${name}-planned.png` });
 
   await browser.close();
   console.log(`${name}: 4 shots written`);
