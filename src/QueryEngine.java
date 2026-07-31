@@ -18,6 +18,13 @@ import java.util.concurrent.Semaphore;
  */
 public class QueryEngine {
 
+    /** Timings for one successfully completed query. */
+    public record QueryOutcome(
+            long resultCount,
+            long admissionWaitNanos,
+            long executionNanos) {
+    }
+
     private final BufferManager bm;
     private final int frameBudget;
     private final Semaphore admission;
@@ -48,9 +55,30 @@ public class QueryEngine {
      */
     public long runQuery(String startRange, String endRange, boolean useIndex, Path outputPath)
             throws IOException, InterruptedException {
+        return runMeasuredQuery(startRange, endRange, useIndex, outputPath).resultCount();
+    }
+
+    /**
+     * Runs one query and separates time waiting for admission from time spent
+     * executing after admission. Failed queries are rethrown and have no
+     * successful outcome.
+     */
+    public QueryOutcome runMeasuredQuery(
+            String startRange,
+            String endRange,
+            boolean useIndex,
+            Path outputPath) throws IOException, InterruptedException {
+        long admissionStartNanos = System.nanoTime();
         admission.acquire();
+        long executionStartNanos = System.nanoTime();
         try {
-            return RunQuery.run(startRange, endRange, frameBudget, useIndex, bm, outputPath);
+            long resultCount =
+                    RunQuery.run(startRange, endRange, frameBudget, useIndex, bm, outputPath);
+            long completedNanos = System.nanoTime();
+            return new QueryOutcome(
+                    resultCount,
+                    executionStartNanos - admissionStartNanos,
+                    completedNanos - executionStartNanos);
         } finally {
             admission.release();
         }

@@ -3,11 +3,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import buffer.BufferManager;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -110,7 +107,7 @@ public class QueryEngineTest {
 					Path out = tempDir.resolve(
 							"engine-" + q + "-" + System.nanoTime() + ".csv");
 					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
-					return sortedRows(out);
+					return SequentialBaselines.sortedRows(out);
 				}));
 			}
 			// get() rethrows worker exceptions in the test thread
@@ -132,19 +129,14 @@ public class QueryEngineTest {
 	/** Runs one range serially on a fresh private manager. */
 	private static List<String> computeBaseline(String start, String end, boolean useIndex)
 			throws IOException {
-		BufferManager bm = new BufferManager(50);
-		RunQuery.registerCatalog(bm);
 		Path out = tempDir.resolve("baseline-" + System.nanoTime() + ".csv");
-		RunQuery.run(start, end, QUERY_FRAME_BUDGET, useIndex, bm, out);
-		List<String> rows = sortedRows(out);
+		List<String> rows = SequentialBaselines.compute(
+				new SequentialBaselines.Spec(start, end, useIndex),
+				50,
+				QUERY_FRAME_BUDGET,
+				out);
 		// Guard against a vacuous pass: every range must select some rows
 		assertFalse(rows.isEmpty(), "baseline for [" + start + ", " + end + "] is empty");
-		return rows;
-	}
-
-	private static List<String> sortedRows(Path out) throws IOException {
-		List<String> rows = new ArrayList<>(Files.readAllLines(out, StandardCharsets.UTF_8));
-		Collections.sort(rows);
 		return rows;
 	}
 }
