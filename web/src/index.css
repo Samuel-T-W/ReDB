@@ -22,7 +22,6 @@
   --red: #f06c6c;
   --red-tint: rgba(240, 108, 108, 0.28);
   --violet: #b18cff;
-  --overlay: rgba(3, 6, 11, 0.62);
   /* elevation: panels read as lifted surfaces, not outlined boxes */
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 10px 30px -12px rgba(0, 0, 0, 0.7);
   --shadow-pop: 0 18px 50px -16px rgba(0, 0, 0, 0.7);
@@ -33,6 +32,10 @@
   --r-data: 6px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Heights of the two sticky bars. Anything that pins or scrolls into view
+     below them offsets against these. */
+  --topbar-h: 84px;
+  --section-nav-h: 58px;
 }
 
 :root[data-theme="light"] {
@@ -57,7 +60,6 @@
   --red: #d64545;
   --red-tint: rgba(214, 69, 69, 0.18);
   --violet: #7a52d0;
-  --overlay: rgba(28, 39, 56, 0.4);
   --shadow-panel: 0 1px 2px rgba(20, 29, 43, 0.04), 0 10px 30px -16px rgba(20, 29, 43, 0.22);
   --shadow-pop: 0 18px 50px -16px rgba(20, 29, 43, 0.28);
 }
@@ -726,20 +728,29 @@ footer {
   font-style: italic;
 }
 
-/* ============ Multi-page shell (iterations + planned) ============ */
+/* ============ Multi-page shell (iterations + home) ============ */
 .app-shell {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 16px 24px 48px;
+  /* No top padding: the topbar is sticky and owns its own, so nothing can
+     scroll through the gap above it. */
+  padding: 0 24px 48px;
   min-height: 100vh;
 }
 
+/* The brand and the version stepper stay reachable from anywhere on the page,
+   so the topbar pins. --topbar-h is what everything below it offsets against;
+   keep it in step with this rule's height. */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--topbar-h);
   display: flex;
   align-items: center;
   gap: 24px;
   justify-content: space-between;
-  padding: 8px 0 16px;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 .brand {
@@ -803,6 +814,10 @@ footer {
   align-items: center;
   gap: 7px;
   padding: 0 6px;
+  text-decoration: none;
+}
+.iter-step:hover {
+  text-decoration: none;
 }
 /* connector segment running from this step's dot to the next */
 .iter-step::before {
@@ -924,6 +939,8 @@ footer {
 }
 .iter-actions {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-top: 20px;
   flex-wrap: wrap;
@@ -935,111 +952,67 @@ footer {
   color: var(--text);
   box-shadow: 0 4px 14px var(--accent-glow);
 }
-.action-btn.active {
-  background: var(--accent-tint);
-  border-color: var(--accent);
-  color: var(--accent);
+/* view tabs — the panel below swaps in place, so these read as a segmented
+   control over one surface rather than as three separate actions */
+.iter-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border-bright);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 3px;
+  gap: 3px;
+}
+.iter-tab {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.iter-tab:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.iter-tab.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.iter-tab.on:hover {
+  background: var(--accent);
+  filter: brightness(1.06);
 }
 .iter-main {
   margin-top: 4px;
 }
 
-.planned-placeholder {
+/* What a planned iteration leads with, in place of a simulation it cannot run */
+.planned-note {
   border: 1px dashed var(--border-bright);
   border-radius: 14px;
-  padding: 56px 32px;
-  text-align: center;
+  padding: 22px 24px;
   background: var(--panel);
+  margin-bottom: 18px;
 }
-.planned-placeholder h2 {
-  font-size: 22px;
-}
-.planned-placeholder p {
+.planned-note p {
   color: var(--muted);
-  max-width: 580px;
-  margin: 12px auto 24px;
+  max-width: 760px;
+  margin: 0 0 16px;
   line-height: 1.6;
 }
 
-/* side panel — fixed drawer that overlays the page; the demo never reflows */
-.iter-content {
-  min-width: 0;
-}
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  z-index: 40;
-  animation: fadein 0.2s ease;
-}
-.side-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  z-index: 50;
-  width: 400px;
-  max-width: 92vw;
-  height: 100vh;
-  background: var(--panel);
-  border-left: 1px solid var(--border-bright);
-  box-shadow: var(--shadow-pop);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: slidein 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadein {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes slidein {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-.side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.side-head h3 {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--text);
-  text-transform: none;
-  letter-spacing: 0;
-  margin: 0;
-}
-.side-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 4px 8px;
-}
-.side-close:hover {
-  color: var(--text);
-}
-.side-body {
-  padding: 18px;
-  overflow-y: auto;
-}
-
+/* explain + performance panels — these swap in place of the simulation, so they
+   get the full content width rather than a 400px drawer */
 .explain-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  /* auto-fill, not auto-fit: a planned iteration has a single explanation card,
+     and auto-fit would collapse the empty track and stretch it edge to edge. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
 }
 .explain-card {
   background: var(--bg-2);
@@ -1062,19 +1035,27 @@ footer {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
-  margin: 0 0 10px;
+  margin: 0 0 22px;
+  max-width: 780px;
 }
 .perf-headline {
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.65;
-  margin: 0 0 16px;
+  font-size: 18px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+  max-width: 780px;
+}
+.perf-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
+  align-items: start;
 }
 .perf-highlights {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
 }
 .perf-highlight {
   background: var(--bg-2);
@@ -1129,12 +1110,13 @@ footer {
   font-family: var(--mono);
 }
 .perf-takeaways {
-  margin: 16px 0;
+  margin: 0 0 18px;
   padding-left: 18px;
   color: var(--muted);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  font-size: 14px;
 }
 .perf-takeaways li {
   line-height: 1.55;
@@ -1142,14 +1124,6 @@ footer {
 .perf-link {
   display: inline-flex;
   align-items: center;
-  width: 100%;
-  justify-content: center;
-  margin-top: 4px;
-}
-@media (max-width: 520px) {
-  .perf-highlights {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* planned work list */
@@ -1205,4 +1179,86 @@ footer {
   line-height: 1.55;
   margin: 0 0 14px;
   max-width: 700px;
+}
+
+/* ============ Home page ============ */
+/* Section nav — pins to the top once the topbar scrolls away, so the jump
+   links stay reachable down the length of the page. */
+.section-nav {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 30;
+  height: var(--section-nav-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  /* A soft edge rather than a rule: the sections already carry border-tops, and
+     two hard lines a few pixels apart read as one thick smudge after a jump. */
+  box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.3);
+}
+.section-link {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.section-link:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.section-link.on {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+/* Land a jumped-to section flush under both sticky bars, so its border-top
+   reads as the section nav's own divider rather than doubling up with one. */
+.home-hero,
+.home-section {
+  scroll-margin-top: calc(var(--topbar-h) + var(--section-nav-h));
+}
+
+/* The hero and section blocks are the shared landing styles above, retuned for
+   the narrower rhythm inside .app-shell. */
+.home-hero {
+  padding: 72px 0 56px;
+  /* The shared .hero glow is sized for a full-bleed section; inside the shell it
+     would cut off at the content edge, so re-aim it to fade out well inside. */
+  background: radial-gradient(760px 380px at 50% -12%, var(--accent-tint), transparent 60%);
+}
+.home-hero .eyebrow {
+  margin-bottom: 14px;
+}
+.home-section {
+  padding: 48px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+}
+.home-section .eyebrow {
+  margin-bottom: 10px;
+}
+/* Two across rather than four: these cards carry a paragraph each, and four
+   columns leaves them tall, narrow, and ragged along the bottom edge. */
+.home-section .cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+}
+.home-section .planned-list {
+  margin-top: 28px;
+}
+@media (max-width: 720px) {
+  .hero h1 {
+    font-size: 36px;
+  }
+  .hero .lede {
+    font-size: 17px;
+  }
+  .home-hero {
+    padding: 48px 0 40px;
+  }
 }

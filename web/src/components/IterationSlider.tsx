@@ -1,20 +1,20 @@
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ITERATIONS } from "../data/iterations";
 
-export default function IterationSlider({ currentId }: { currentId: number }) {
-  const navigate = useNavigate();
-
+// Navigation between iterations, not a tab set: each step goes to its own
+// route. The home page renders it with no current iteration, so no step is
+// marked as the one you are on.
+export default function IterationSlider({ currentId }: { currentId?: number }) {
   return (
-    <div className="iter-steps" role="tablist" aria-label="Select iteration">
+    <nav className="iter-steps" aria-label="Engine iterations">
       {ITERATIONS.map((it) => {
         const active = it.id === currentId;
         return (
-          <button
+          <Link
             key={it.id}
-            role="tab"
-            aria-selected={active}
+            to={`/iteration/${it.id}`}
+            aria-current={active ? "page" : undefined}
             className={`iter-step${active ? " active" : ""} ${it.status}`}
-            onClick={() => navigate(`/iteration/${it.id}`)}
           >
             <span className="step-dot" />
             <span className="step-meta">
@@ -22,9 +22,9 @@ export default function IterationSlider({ currentId }: { currentId: number }) {
               <span className="step-name">{it.name}</span>
               {it.status === "planned" && <span className="step-planned">planned</span>}
             </span>
-          </button>
+          </Link>
         );
       })}
-    </div>
+    </nav>
   );
 }
