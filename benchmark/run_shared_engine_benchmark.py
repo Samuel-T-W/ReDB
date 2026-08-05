@@ -10,6 +10,7 @@ import subprocess
 from typing import Sequence
 
 from shared_engine_metrics import parse_metrics_file
+from shared_engine_results import write_analysis_csvs
 from workload import read_workload
 
 
@@ -60,6 +61,7 @@ def run_benchmark(
             check=True)
 
     successful = []
+    configuration_results = []
     for max_concurrent, clients, buffer_size in MATRIX:
         config_dir = output_dir / f"concurrency-{max_concurrent}-buffer-{buffer_size}"
         config_dir.mkdir()
@@ -83,9 +85,11 @@ def run_benchmark(
                 stdout=subprocess.DEVNULL,
                 stderr=stderr,
                 check=True)
-        parse_metrics_file(metrics)
+        parsed = parse_metrics_file(metrics)
+        configuration_results.append(parsed)
         successful.append(config_dir)
         print(f"Successful config: {config_dir}")
+    write_analysis_csvs(output_dir, run_workload, configuration_results)
     return successful
 
 
