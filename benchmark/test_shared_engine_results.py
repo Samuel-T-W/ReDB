@@ -29,6 +29,16 @@ class SharedEngineResultsTest(unittest.TestCase):
                     "buffer_size": 90,
                     "frame_budget": 12,
                     "workloads": 2,
+                    "repetitions": 2,
+                    "queries": 4,
+                    "successful": 3,
+                    "failed": 1,
+                    "read_ios": 17,
+                    "write_ios": 2,
+                    "result_mismatches": 1,
+                    "residual_pins": 3,
+                    "catalog_clean": 0,
+                    "residual_buffer_file_ids": 4,
                 },
             )
 
@@ -65,6 +75,37 @@ class SharedEngineResultsTest(unittest.TestCase):
             self.assertEqual(["2", "2"], [row["queries"] for row in repetitions])
             self.assertEqual(["2000", "4000"], [row["makespan_ms"] for row in repetitions])
             self.assertEqual(["1", "0.5"], [row["throughput_qps"] for row in repetitions])
+
+            with (output / "summary.csv").open(newline="", encoding="utf-8") as source:
+                summary_reader = csv.DictReader(source)
+                summary = list(summary_reader)
+            self.assertEqual(
+                ["max_concurrent", "clients", "buffer_size", "frame_budget", "repetitions",
+                 "queries", "successful", "failed", "latency_mean_ms", "latency_p50_ms",
+                 "latency_p95_ms", "admission_wait_mean_ms", "execution_mean_ms",
+                 "makespan_mean_ms", "makespan_median_ms", "makespan_min_ms",
+                 "makespan_max_ms", "throughput_mean_qps", "read_ios", "write_ios",
+                 "result_mismatches", "residual_pins", "catalog_clean",
+                 "residual_buffer_file_ids"],
+                summary_reader.fieldnames)
+            self.assertEqual(1, len(summary))
+            row = summary[0]
+            self.assertEqual("1.683642", row["latency_mean_ms"])
+            self.assertEqual("1.6172835", row["latency_p50_ms"])
+            self.assertEqual("2.5", row["latency_p95_ms"])
+            self.assertEqual("0.183642", row["admission_wait_mean_ms"])
+            self.assertEqual("1.5", row["execution_mean_ms"])
+            self.assertEqual("3000", row["makespan_mean_ms"])
+            self.assertEqual("3000", row["makespan_median_ms"])
+            self.assertEqual("2000", row["makespan_min_ms"])
+            self.assertEqual("4000", row["makespan_max_ms"])
+            self.assertEqual("0.75", row["throughput_mean_qps"])
+            self.assertEqual(
+                ["2", "4", "3", "1", "17", "2", "1", "3", "0", "4"],
+                [row[name] for name in (
+                    "repetitions", "queries", "successful", "failed", "read_ios",
+                    "write_ios", "result_mismatches", "residual_pins", "catalog_clean",
+                    "residual_buffer_file_ids")])
 
 
 if __name__ == "__main__":

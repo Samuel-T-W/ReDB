@@ -113,6 +113,7 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
         self.assertFalse((output / "concurrency-2-buffer-40").exists())
         self.assertFalse((output / "queries.csv").exists())
         self.assertFalse((output / "repetitions.csv").exists())
+        self.assertFalse((output / "summary.csv").exists())
 
     def test_rejects_existing_output_directory(self):
         output = self.root / "existing"

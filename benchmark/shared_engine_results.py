@@ -18,6 +18,15 @@ REPETITION_COLUMNS = [
     "max_concurrent", "clients", "buffer_size", "frame_budget", "repetition",
     "queries", "makespan_ms", "throughput_qps",
 ]
+SUMMARY_COLUMNS = [
+    "max_concurrent", "clients", "buffer_size", "frame_budget", "repetitions",
+    "queries", "successful", "failed", "latency_mean_ms", "latency_p50_ms",
+    "latency_p95_ms", "admission_wait_mean_ms", "execution_mean_ms",
+    "makespan_mean_ms", "makespan_median_ms", "makespan_min_ms",
+    "makespan_max_ms", "throughput_mean_qps", "read_ios", "write_ios",
+    "result_mismatches", "residual_pins", "catalog_clean",
+    "residual_buffer_file_ids",
+]
 NANOS_PER_MILLISECOND = Decimal(1_000_000)
 NANOS_PER_SECOND = Decimal(1_000_000_000)
 
@@ -28,6 +37,7 @@ def write_analysis_csvs(
     workloads = read_workload(workload_path)
     query_rows = []
     repetition_rows = []
+    summary_rows = []
     for metrics in configurations:
         common = {
             "max_concurrent": metrics.run["max_concurrent"],
@@ -52,8 +62,10 @@ def write_analysis_csvs(
                 "execution_ms": _milliseconds(query.execution_ns),
             })
         queries = metrics.run["workloads"]
+        throughputs = []
         for repetition, makespan in enumerate(metrics.makespans_ns):
             throughput = Decimal(queries) * NANOS_PER_SECOND / Decimal(makespan)
+            throughputs.append(throughput)
             repetition_rows.append({
                 **common,
                 "repetition": repetition,
@@ -61,13 +73,59 @@ def write_analysis_csvs(
                 "makespan_ms": _milliseconds(makespan),
                 "throughput_qps": throughput,
             })
+        latencies = [query.client_latency_ns for query in metrics.queries]
+        admission_waits = [query.admission_wait_ns for query in metrics.queries]
+        executions = [query.execution_ns for query in metrics.queries]
+        makespans = list(metrics.makespans_ns)
+        summary_rows.append({
+            **common,
+            "repetitions": metrics.run["repetitions"],
+            "queries": metrics.run["queries"],
+            "successful": metrics.run["successful"],
+            "failed": metrics.run["failed"],
+            "latency_mean_ms": _milliseconds(_mean(latencies)),
+            "latency_p50_ms": _milliseconds(_median(latencies)),
+            "latency_p95_ms": _milliseconds(_nearest_rank(latencies, 95)),
+            "admission_wait_mean_ms": _milliseconds(_mean(admission_waits)),
+            "execution_mean_ms": _milliseconds(_mean(executions)),
+            "makespan_mean_ms": _milliseconds(_mean(makespans)),
+            "makespan_median_ms": _milliseconds(_median(makespans)),
+            "makespan_min_ms": _milliseconds(min(makespans)),
+            "makespan_max_ms": _milliseconds(max(makespans)),
+            "throughput_mean_qps": _mean(throughputs),
+            "read_ios": metrics.run["read_ios"],
+            "write_ios": metrics.run["write_ios"],
+            "result_mismatches": metrics.run["result_mismatches"],
+            "residual_pins": metrics.run["residual_pins"],
+            "catalog_clean": metrics.run["catalog_clean"],
+            "residual_buffer_file_ids": metrics.run["residual_buffer_file_ids"],
+        })
 
     _write_csv(output_dir / "queries.csv", QUERY_COLUMNS, query_rows)
     _write_csv(output_dir / "repetitions.csv", REPETITION_COLUMNS, repetition_rows)
+    _write_csv(output_dir / "summary.csv", SUMMARY_COLUMNS, summary_rows)
 
 
-def _milliseconds(nanoseconds: int) -> Decimal:
+def _milliseconds(nanoseconds) -> Decimal:
     return Decimal(nanoseconds) / NANOS_PER_MILLISECOND
+
+
+def _mean(values) -> Decimal:
+    return sum((Decimal(value) for value in values), Decimal()) / len(values)
+
+
+def _median(values) -> Decimal:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return Decimal(ordered[middle])
+    return (Decimal(ordered[middle - 1]) + Decimal(ordered[middle])) / 2
+
+
+def _nearest_rank(values, percentile: int):
+    ordered = sorted(values)
+    rank = (percentile * len(ordered) + 99) // 100
+    return ordered[rank - 1]
 
 
 def _write_csv(path: Path, columns: list[str], rows: list[dict[str, object]]) -> None:
