@@ -21,19 +21,16 @@ WARMUPS = 1
 REPETITIONS = 5
 
 
-def find_repo_root(start: Path) -> Path:
-    """Find the nearest ReDB root at or above start."""
-    location = start.resolve()
-    if location.is_file():
-        location = location.parent
-    for candidate in (location, *location.parents):
-        if (candidate / "pom.xml").is_file() and (
-                candidate / "src" / "EngineBenchmark.java").is_file():
-            return candidate
-    raise FileNotFoundError(f"could not find ReDB repository root from: {start}")
+def repo_root_from_script(script: Path) -> Path:
+    repo_root = script.resolve().parent.parent
+    if not (repo_root / "pom.xml").is_file():
+        raise FileNotFoundError(
+            "benchmark script path no longer matches <repo>/benchmark/<script>: "
+            f"expected pom.xml under {repo_root}")
+    return repo_root
 
 
-REPO_ROOT = find_repo_root(Path(__file__))
+REPO_ROOT = repo_root_from_script(Path(__file__))
 DEFAULT_WORKLOAD = REPO_ROOT / "benchmark" / "concurrency_workload.csv"
 DEFAULT_RESULTS_ROOT = REPO_ROOT / "benchmark" / "results" / "shared-engine"
 

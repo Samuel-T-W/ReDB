@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import argparse
-import csv
 import datetime as dt
 import json
 import os
@@ -23,9 +24,24 @@ from reporting import (
     display_metric,
     summarize,
 )
+from workload import read_workload
 
 
 DATABASE_FILES = ("movies.db", "workedon.db", "people.db")
+
+
+def repo_root_from_script(script: Path) -> Path:
+    repo_root = script.resolve().parent.parent
+    if not (repo_root / "pom.xml").is_file():
+        raise FileNotFoundError(
+            "benchmark script path no longer matches <repo>/benchmark/<script>: "
+            f"expected pom.xml under {repo_root}")
+    return repo_root
+
+
+REPO_ROOT = repo_root_from_script(Path(__file__))
+DEFAULT_WORKLOAD = REPO_ROOT / "benchmark" / "concurrency_workload.csv"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "benchmark" / "results" / "legacy-multi-jvm" / "runs"
 
 
 class Workload(TypedDict):
@@ -52,7 +68,7 @@ class BenchmarkArgs(argparse.Namespace):
     run_label: str | None
 
 
-def parse_args() -> BenchmarkArgs:
+def parse_args(argv: Sequence[str] | None = None) -> BenchmarkArgs:
     """Parse command-line options and reject invalid benchmark settings."""
     parser = argparse.ArgumentParser(
         description="Run isolated ReDB query processes and record latency/throughput."
@@ -65,8 +81,8 @@ def parse_args() -> BenchmarkArgs:
     parser.add_argument(
         "--repetitions",
         type=int,
-        default=3,
-        help="Measured repetitions of every workload at each concurrency (default: 3).",
+        default=5,
+        help="Measured repetitions of every workload at each concurrency (default: 5).",
     )
     parser.add_argument(
         "--warmups",
@@ -83,13 +99,13 @@ def parse_args() -> BenchmarkArgs:
     parser.add_argument(
         "--workload",
         type=Path,
-        default=Path(__file__).with_name("workload.csv"),
+        default=DEFAULT_WORKLOAD,
         help="CSV containing name,start_range,end_range.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).with_name("results"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Directory for raw CSV, summary CSV, and metadata JSON.",
     )
     parser.add_argument("--index", action="store_true", help="Use the title index query path.")
@@ -112,7 +128,7 @@ def parse_args() -> BenchmarkArgs:
         "--run-label",
         help="Optional human-readable label attached to output rows.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         args.concurrency = [int(value) for value in args.concurrency.split(",")]
@@ -132,21 +148,11 @@ def parse_args() -> BenchmarkArgs:
 
 
 def load_workloads(path: Path) -> list[Workload]:
-    """Load and validate named title-range query scenarios from a CSV file."""
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        required = {"name", "start_range", "end_range"}
-        if set(reader.fieldnames or ()) != required:
-            raise ValueError(
-                f"{path} must have exactly these columns: name,start_range,end_range"
-            )
-        workloads = cast(list[Workload], list(reader))
-    if not workloads:
-        raise ValueError(f"{path} contains no workloads")
-    for workload in workloads:
-        if len(workload["start_range"]) > 30 or len(workload["end_range"]) > 30:
-            raise ValueError(f"Range exceeds 30 characters in workload {workload['name']}")
-    return workloads
+    """Load named title-range query scenarios through the shared CSV reader."""
+    return [
+        Workload(name=name, start_range=start_range, end_range=end_range)
+        for name, start_range, end_range in read_workload(path)
+    ]
 
 
 def run_checked(command: Sequence[str], cwd: Path) -> None:
@@ -322,7 +328,7 @@ def run_group(
 def main() -> int:
     """Validate prerequisites, run all benchmark groups, and write results."""
     args = parse_args()
-    root = Path(__file__).resolve().parent.parent
+    root = REPO_ROOT
 
     # Queries require the binary databases produced by the preprocessing step.
     missing = [file_name for file_name in DATABASE_FILES if not (root / file_name).is_file()]

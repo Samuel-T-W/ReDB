@@ -7,7 +7,7 @@ from unittest.mock import patch
 from run_shared_engine_benchmark import (
     DEFAULT_WORKLOAD,
     MATRIX,
-    find_repo_root,
+    repo_root_from_script,
     run_benchmark,
 )
 from workload import read_workload
@@ -33,22 +33,22 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
             ["small_a_range", "medium_m_range", "medium_t_range"] * 4,
             [row[0] for row in rows])
 
-    def test_finds_repo_root_from_arbitrarily_nested_path(self):
+    def test_derives_repo_root_from_benchmark_script_path(self):
         repository = self.root / "repository"
-        (repository / "src").mkdir(parents=True)
+        benchmark = repository / "benchmark"
+        benchmark.mkdir(parents=True)
         (repository / "pom.xml").touch()
-        (repository / "src" / "EngineBenchmark.java").touch()
-        nested = repository / "one" / "two" / "three"
-        nested.mkdir(parents=True)
 
-        self.assertEqual(repository, find_repo_root(nested))
+        self.assertEqual(repository, repo_root_from_script(benchmark / "runner.py"))
 
-    def test_repo_root_discovery_fails_without_markers(self):
-        markerless = self.root / "markerless" / "nested"
-        markerless.mkdir(parents=True)
+    def test_reports_broken_benchmark_script_layout(self):
+        misplaced = self.root / "one" / "two" / "runner.py"
+        misplaced.parent.mkdir(parents=True)
 
-        with self.assertRaisesRegex(FileNotFoundError, "could not find ReDB repository root"):
-            find_repo_root(markerless)
+        with self.assertRaisesRegex(
+                FileNotFoundError,
+                "script path no longer matches <repo>/benchmark/<script>"):
+            repo_root_from_script(misplaced)
 
     def test_wires_build_and_fixed_matrix_commands(self):
         output = self.root / "run"
