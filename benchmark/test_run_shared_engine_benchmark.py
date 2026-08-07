@@ -58,12 +58,13 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
                 return_value=subprocess.CompletedProcess([], 0)) as runner, patch(
                 "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
                 "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
-                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer:
+                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer, patch(
+                "run_shared_engine_benchmark.run_monitored_java") as java_runner:
             writer.side_effect = lambda *_: self.assertEqual(3, parser.call_count)
             metadata_writer.side_effect = lambda *_: self.assertEqual(1, writer.call_count)
             successful = run_benchmark(self.workload, output, False, self.root)
 
-        self.assertEqual(4, runner.call_count)
+        self.assertEqual(1, runner.call_count)
         self.assertEqual(["mvn", "-q", "-DskipTests", "compile"], runner.call_args_list[0].args[0])
         self.assertEqual(3, parser.call_count)
         writer.assert_called_once()
@@ -75,7 +76,7 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
         self.assertEqual(
             [output / f"concurrency-{concurrency}-buffer-{buffer}" for concurrency, _, buffer in MATRIX],
             successful)
-        for call, (concurrency, clients, buffer) in zip(runner.call_args_list[1:], MATRIX):
+        for call, (concurrency, clients, buffer) in zip(java_runner.call_args_list, MATRIX):
             config = output / f"concurrency-{concurrency}-buffer-{buffer}"
             self.assertEqual(
                 [
@@ -90,11 +91,7 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
                     "--result-file", str(config / "engine.metrics"),
                 ],
                 call.args[0])
-            self.assertEqual(self.root, call.kwargs["cwd"])
-            self.assertTrue(call.kwargs["check"])
-            self.assertTrue((config / "engine.stderr.log").is_file())
-            self.assertEqual(subprocess.DEVNULL, call.kwargs["stdout"])
-            self.assertEqual(config / "engine.stderr.log", Path(call.kwargs["stderr"].name))
+            self.assertEqual((self.root, config), call.args[1:])
 
     def test_fails_fast_and_preserves_failed_config(self):
         failure = subprocess.CalledProcessError(1, ["java"])
@@ -102,19 +99,22 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
 
         with patch(
                 "run_shared_engine_benchmark.subprocess.run",
-                side_effect=[subprocess.CompletedProcess([], 0), failure]) as runner, patch(
+                return_value=subprocess.CompletedProcess([], 0)) as runner, patch(
                 "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
                 "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
                 "run_shared_engine_benchmark.write_run_metadata") as metadata_writer:
-            with self.assertRaises(subprocess.CalledProcessError):
-                run_benchmark(self.workload, output, False, self.root)
+            with patch(
+                    "run_shared_engine_benchmark.run_monitored_java",
+                    side_effect=failure) as java_runner:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_benchmark(self.workload, output, False, self.root)
 
-        self.assertEqual(2, runner.call_count)
+        self.assertEqual(1, runner.call_count)
+        self.assertEqual(1, java_runner.call_count)
         parser.assert_not_called()
         writer.assert_not_called()
         metadata_writer.assert_not_called()
         failed = output / "concurrency-1-buffer-20"
-        self.assertTrue((failed / "engine.stderr.log").is_file())
         self.assertFalse((output / "concurrency-2-buffer-40").exists())
         self.assertFalse((output / "queries.csv").exists())
         self.assertFalse((output / "repetitions.csv").exists())

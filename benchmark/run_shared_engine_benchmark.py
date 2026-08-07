@@ -11,6 +11,7 @@ from typing import Sequence
 
 from shared_engine_metrics import parse_metrics_file
 from shared_engine_metadata import write_run_metadata
+from shared_engine_resources import run_monitored_java
 from shared_engine_results import write_analysis_csvs
 from workload import read_workload
 
@@ -67,7 +68,6 @@ def run_benchmark(
         config_dir = output_dir / f"concurrency-{max_concurrent}-buffer-{buffer_size}"
         config_dir.mkdir()
         metrics = config_dir / "engine.metrics"
-        stderr_path = config_dir / "engine.stderr.log"
         command = [
             "java", "-cp", "target/classes", "EngineBenchmark",
             "--workload", str(run_workload),
@@ -79,13 +79,7 @@ def run_benchmark(
             "--output-dir", str(config_dir),
             "--result-file", str(metrics),
         ]
-        with stderr_path.open("x", encoding="utf-8") as stderr:
-            subprocess.run(
-                command,
-                cwd=repo_root,
-                stdout=subprocess.DEVNULL,
-                stderr=stderr,
-                check=True)
+        run_monitored_java(command, repo_root, config_dir)
         parsed = parse_metrics_file(metrics)
         configuration_results.append(parsed)
         successful.append(config_dir)
