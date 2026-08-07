@@ -15,6 +15,54 @@ mvn test -Dtest=MovieIDRangeQueryPerformanceTest
 rm test/btree/MovieIDRangeQueryPerformanceTest.java
 ```
 
+# Shared-engine concurrent benchmark
+
+The shared-engine benchmark runs the tracked 12-query `benchmark/concurrency_workload.csv` against one `QueryEngine` JVM for each fixed concurrency configuration.
+The fixed matrix is `(max_concurrent, clients, buffer_size) = (1, 1, 20), (2, 2, 40), (4, 4, 80)` with one warmup, five measured repetitions, and no index.
+
+Create the database files, then run the harness from anywhere inside the repository:
+
+```bash
+./run.sh pre_process
+python3 benchmark/run_shared_engine_benchmark.py
+```
+
+Use `--skip-build` after compiling, `--workload <path>` to supply another manifest with the same exact CSV header, or `--output-dir <new-path>` to choose the run directory.
+The output directory must not already exist.
+By default, each run uses a new UTC identifier under `benchmark/results/shared-engine/`.
+
+```text
+benchmark/results/shared-engine/<UTC-run-id>/
+├── workload.csv
+├── queries.csv
+├── repetitions.csv
+├── summary.csv
+├── metadata.json
+├── concurrency-1-buffer-20/
+│   ├── engine.metrics
+│   ├── engine.stderr.log
+│   └── resources.json
+├── concurrency-2-buffer-40/
+│   ├── engine.metrics
+│   ├── engine.stderr.log
+│   └── resources.json
+└── concurrency-4-buffer-80/
+    ├── engine.metrics
+    ├── engine.stderr.log
+    └── resources.json
+```
+
+`workload.csv` is the exact copied manifest used by the run.
+Each `engine.metrics` contains the Java line protocol, each `engine.stderr.log` preserves Java diagnostics, and each `resources.json` contains sampled process and host resource summaries.
+`queries.csv` contains one row per measured query, `repetitions.csv` contains one row per configuration repetition, and `summary.csv` contains one row per configuration.
+`metadata.json` records repository, Java, platform, and build provenance after the full run succeeds.
+
+# Historical multi-JVM results
+
+The pre-shared-engine result artifacts and analysis figures are preserved under `benchmark/results/legacy-multi-jvm/`.
+They were copied byte-for-byte from the pre-existing ignored local results and added to Git tracking; they were not regenerated or modified by this work.
+They remain historical evidence from the isolated multi-JVM harness described below and are not controlled shared-engine results.
+
 # ReDB concurrent query benchmark
 
 This benchmark runs the existing `run_query` plan with multiple isolated JVM
