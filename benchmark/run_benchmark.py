@@ -281,25 +281,24 @@ def run_query(
         shutil.rmtree(worker_dir, ignore_errors=True)
 
 
-def run_group(
+def run_repetition(
     root: Path,
     work_parent: Path,
     workloads: Sequence[Workload],
     concurrency: int,
-    repetitions: int,
+    repetition: int,
     args: BenchmarkArgs,
     warmup: bool,
 ) -> tuple[list[ResultRow], float, GroupMetrics]:
-    """Run every workload/repetition pair with a fixed worker concurrency."""
-    tasks = [
-        (workload, repetition)
-        for repetition in range(1, repetitions + 1)
-        for workload in workloads
-    ]
-    group_start = time.perf_counter_ns()
+    """Run every workload once at a fixed concurrency inside one isolated window.
+
+    Each repetition owns its executor, clock, and memory monitor, so a spike in
+    one repetition cannot leak into the makespan or peak metrics of the next.
+    """
     memory_monitor = ProcessMemoryMonitor(args.memory_sample_ms)
     memory_monitor.start()
     rows = []
+    repetition_start = time.perf_counter_ns()
     try:
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [
@@ -314,13 +313,13 @@ def run_group(
                     memory_monitor,
                     warmup,
                 )
-                for workload, repetition in tasks
+                for workload in workloads
             ]
             for future in as_completed(futures):
                 rows.append(future.result())
     finally:
         memory_monitor.stop()
-    makespan_seconds = (time.perf_counter_ns() - group_start) / 1_000_000_000
+    makespan_seconds = (time.perf_counter_ns() - repetition_start) / 1_000_000_000
     group_metrics = memory_monitor.group_metrics()
     return rows, makespan_seconds, group_metrics
 
@@ -383,31 +382,37 @@ def main() -> int:
     for concurrency in args.concurrency:
         if args.warmups:
             print(f"Warming up concurrency={concurrency}...")
-            run_group(
+            for warmup_repetition in range(1, args.warmups + 1):
+                run_repetition(
+                    root,
+                    work_parent,
+                    workloads,
+                    concurrency,
+                    warmup_repetition,
+                    args,
+                    True,
+                )
+        # Each measured repetition is timed and summarized on its own, so the
+        # repetitions can be averaged and compared to expose one-off spikes.
+        for repetition in range(1, args.repetitions + 1):
+            print(f"Measuring concurrency={concurrency} repetition={repetition}...")
+            rows, makespan_seconds, group_metrics = run_repetition(
                 root,
                 work_parent,
                 workloads,
                 concurrency,
-                args.warmups,
+                repetition,
                 args,
-                True,
+                False,
             )
-        print(f"Measuring concurrency={concurrency}...")
-        rows, makespan_seconds, group_metrics = run_group(
-            root,
-            work_parent,
-            workloads,
-            concurrency,
-            args.repetitions,
-            args,
-            False,
-        )
-        for row in rows:
-            row.update(run_context)
-        all_rows.extend(rows)
-        summary = summarize(rows, concurrency, makespan_seconds, group_metrics)
-        summary.update(summary_context)
-        summaries.append(summary)
+            for row in rows:
+                row.update(run_context)
+            all_rows.extend(rows)
+            summary = summarize(
+                rows, concurrency, repetition, makespan_seconds, group_metrics
+            )
+            summary.update(summary_context)
+            summaries.append(summary)
 
     raw_fields = [
         "run_id",
