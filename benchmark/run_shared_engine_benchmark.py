@@ -10,6 +10,7 @@ import subprocess
 from typing import Sequence
 
 from shared_engine_metrics import parse_metrics_file
+from shared_engine_metadata import write_run_metadata
 from shared_engine_results import write_analysis_csvs
 from workload import read_workload
 
@@ -90,6 +91,7 @@ def run_benchmark(
         successful.append(config_dir)
         print(f"Successful config: {config_dir}")
     write_analysis_csvs(output_dir, run_workload, configuration_results)
+    write_run_metadata(output_dir, repo_root, skip_build)
     return successful
 
 

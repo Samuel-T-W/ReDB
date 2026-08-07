@@ -57,8 +57,10 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
                 "run_shared_engine_benchmark.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0)) as runner, patch(
                 "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
-                "run_shared_engine_benchmark.write_analysis_csvs") as writer:
+                "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
+                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer:
             writer.side_effect = lambda *_: self.assertEqual(3, parser.call_count)
+            metadata_writer.side_effect = lambda *_: self.assertEqual(1, writer.call_count)
             successful = run_benchmark(self.workload, output, False, self.root)
 
         self.assertEqual(4, runner.call_count)
@@ -68,6 +70,7 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
         self.assertEqual(3, len(writer.call_args.args[2]))
         self.assertTrue(all(
             metrics is parser.return_value for metrics in writer.call_args.args[2]))
+        metadata_writer.assert_called_once_with(output, self.root, False)
         self.assertEqual(self.workload.read_bytes(), (output / "workload.csv").read_bytes())
         self.assertEqual(
             [output / f"concurrency-{concurrency}-buffer-{buffer}" for concurrency, _, buffer in MATRIX],
@@ -101,19 +104,22 @@ class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
                 "run_shared_engine_benchmark.subprocess.run",
                 side_effect=[subprocess.CompletedProcess([], 0), failure]) as runner, patch(
                 "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
-                "run_shared_engine_benchmark.write_analysis_csvs") as writer:
+                "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
+                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer:
             with self.assertRaises(subprocess.CalledProcessError):
                 run_benchmark(self.workload, output, False, self.root)
 
         self.assertEqual(2, runner.call_count)
         parser.assert_not_called()
         writer.assert_not_called()
+        metadata_writer.assert_not_called()
         failed = output / "concurrency-1-buffer-20"
         self.assertTrue((failed / "engine.stderr.log").is_file())
         self.assertFalse((output / "concurrency-2-buffer-40").exists())
         self.assertFalse((output / "queries.csv").exists())
         self.assertFalse((output / "repetitions.csv").exists())
         self.assertFalse((output / "summary.csv").exists())
+        self.assertFalse((output / "metadata.json").exists())
 
     def test_rejects_existing_output_directory(self):
         output = self.root / "existing"
