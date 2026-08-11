@@ -142,7 +142,7 @@ python3 benchmark/run_benchmark.py \
 The default output writes:
 
 - `all_raw.csv`: one row per query process with `run_id`.
-- `all_summary.csv`: one row per concurrency level with `run_id` and config
+- `all_summary.csv`: one row per measured repetition with `run_id` and config
   columns such as `buffer_size`, `use_index`, `repetitions`, and `java_xmx`.
 - `all_metadata.jsonl`: one JSON object per benchmark invocation.
 
