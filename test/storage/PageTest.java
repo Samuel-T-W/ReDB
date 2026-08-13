@@ -97,4 +97,18 @@ public class PageTest {
 		}
 		assertEquals(page.insertRecord(inserted), -1);
 	}
+
+	/**
+	 * Byte offsets must be computed in 64-bit arithmetic. Page 524288 sits at
+	 * 2 GiB, which overflows a signed 32-bit int.
+	 */
+	@Test
+	void testGetOffsetDoesNotOverflowAtTwoGiB() {
+		assertEquals(0L, RawPage.getOffset(0));
+		assertEquals(RawPage.MAX_PAGE_LEN, RawPage.getOffset(1));
+		assertEquals(1L << 31, RawPage.getOffset(524288));
+		assertEquals((long) Integer.MAX_VALUE * RawPage.MAX_PAGE_LEN,
+				RawPage.getOffset(Integer.MAX_VALUE));
+		assertEquals(GenericPage.getOffset(524288), RawPage.getOffset(524288));
+	}
 }

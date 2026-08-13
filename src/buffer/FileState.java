@@ -42,15 +42,13 @@ class FileState {
 
 	private int diskPageCount() throws ArithmeticException, IllegalStateException {
 		File file = new File(fileId);
-
-		// don't expect long amount of bytes for this project, throw if encountered
-		int fileLength = Math.toIntExact(file.length());
+		long fileLength = file.length();
 
 		// all pages should be exactly RawPage.MAX_PAGE_LEN long
 		if (fileLength % RawPage.MAX_PAGE_LEN != 0) {
 			throw new IllegalStateException("File size is not a multiple of pages");
 		}
 
-		return fileLength / RawPage.MAX_PAGE_LEN;
+		return Math.toIntExact(fileLength / RawPage.MAX_PAGE_LEN);
 	}
 }

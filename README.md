@@ -130,7 +130,7 @@ ReDB is read-only by design and grows through a sequence of engine iterations, e
 
 ## Limitations
 
-ReDB is an educational engine, not a production database. By design it is read-only, single-threaded (until the read-concurrency iteration lands), supports fixed-length records only, has no transactions or recovery, no deletions in the B+ tree, and one file per table. Page and record IDs are 32-bit ints, capping files at ~2 GB.
+ReDB is an educational engine, not a production database. By design it is read-only, single-threaded (until the read-concurrency iteration lands), supports fixed-length records only, has no transactions or recovery, no deletions in the B+ tree, and one file per table. Page and record IDs are 32-bit ints (~8.8 TB per file at 4 KB pages); files are addressed with 64-bit byte offsets.
 
 ## License
 

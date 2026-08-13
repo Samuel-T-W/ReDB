@@ -31,11 +31,11 @@ public class Scan implements Operator {
     }
 
     private int calculatePageCount(String fileId) {
-        int fileLength = Math.toIntExact(new File(fileId).length());
+        long fileLength = new File(fileId).length();
         if (fileLength % RawPage.MAX_PAGE_LEN != 0) {
             throw new IllegalStateException("File size is not a multiple of pages");
         }
-        return fileLength / RawPage.MAX_PAGE_LEN;
+        return Math.toIntExact(fileLength / RawPage.MAX_PAGE_LEN);
     }
 
     @Override

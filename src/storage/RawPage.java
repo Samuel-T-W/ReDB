@@ -33,8 +33,13 @@ public class RawPage implements Page {
 		this.data = data;
 	}
 
-	/** Returns the byte offset of the given page id within a file. */
-	public static int getOffset(int pid) {
-		return pid * MAX_PAGE_LEN;
+	/**
+	 * Returns the byte offset of the given page id within a file.
+	 *
+	 * <p>The result is a {@code long} so {@code pid * MAX_PAGE_LEN} does not
+	 * overflow a signed 32-bit int at 2 GiB (page id 524288).
+	 */
+	public static long getOffset(int pid) {
+		return (long) pid * MAX_PAGE_LEN;
 	}
 }

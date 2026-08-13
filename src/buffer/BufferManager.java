@@ -442,7 +442,7 @@ public class BufferManager {
 	private void writePageToDisk(String fileId, Page page) throws IOException {
 		writeIOCount.increment();
 		try (RandomAccessFile raf = new RandomAccessFile(fileId, "rw")) {
-			int offset = RawPage.getOffset(page.getPid());
+			long offset = RawPage.getOffset(page.getPid());
 			raf.seek(offset);
 			raf.write(page.getByteArray());
 		}
