@@ -109,6 +109,23 @@ public class PageTest {
 		assertEquals(1L << 31, RawPage.getOffset(524288));
 		assertEquals((long) Integer.MAX_VALUE * RawPage.MAX_PAGE_LEN,
 				RawPage.getOffset(Integer.MAX_VALUE));
-		assertEquals(GenericPage.getOffset(524288), RawPage.getOffset(524288));
+	}
+
+	/**
+	 * 64-bit offsets are no longer the ceiling; the 32-bit page id is. The last
+	 * addressable page sits at ~8.8 TB (Integer.MAX_VALUE * 4096). One page
+	 * beyond that, the id itself wraps negative, so the offset is not the next
+	 * offset up but a negative one - a file that large is still unreachable.
+	 */
+	@Test
+	void testPageIdSpaceStillCapsFilesAtEightPointEightTerabytes() {
+		long lastOffset = RawPage.getOffset(Integer.MAX_VALUE);
+		assertEquals(8796093018112L, lastOffset);
+
+		int pastLastPageId = Integer.MAX_VALUE + 1; // wraps to Integer.MIN_VALUE
+		long pastLastOffset = RawPage.getOffset(pastLastPageId);
+
+		assertNotEquals(lastOffset + RawPage.MAX_PAGE_LEN, pastLastOffset);
+		assertTrue(pastLastOffset < 0);
 	}
 }

@@ -203,8 +203,4 @@ public class GenericPage implements DataPage {
 
 		return (MAX_PAGE_LEN - HEADER_SIZE) / this.recordSize;
 	}
-
-	public static long getOffset(int pid) {
-		return (long) pid * MAX_PAGE_LEN;
-	}
 }
