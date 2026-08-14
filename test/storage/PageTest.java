@@ -91,7 +91,7 @@ public class PageTest {
 		GenericRecord inserted = makeMovieRecord(MOVIE_SCHEMA, expectedId, expectedTitle);
 		int numRecord = 0;
 		int slotId = 0;
-		for (int i = 0; i < (int) (GenericPage.MAX_PAGE_LEN - 8) / RECORD_SIZE; i++) {
+		for (int i = 0; i < (int) (RawPage.MAX_PAGE_LEN - 8) / RECORD_SIZE; i++) {
 			slotId = page.insertRecord(inserted);
 			assertEquals(slotId, i);
 		}
