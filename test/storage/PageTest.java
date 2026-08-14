@@ -107,25 +107,43 @@ public class PageTest {
 		assertEquals(0L, RawPage.getOffset(0));
 		assertEquals(RawPage.MAX_PAGE_LEN, RawPage.getOffset(1));
 		assertEquals(1L << 31, RawPage.getOffset(524288));
-		assertEquals((long) Integer.MAX_VALUE * RawPage.MAX_PAGE_LEN,
-				RawPage.getOffset(Integer.MAX_VALUE));
+		assertEquals(RawPage.MAX_FILE_LEN - RawPage.MAX_PAGE_LEN,
+				RawPage.getOffset(RawPage.MAX_PAGE_COUNT - 1));
 	}
 
 	/**
-	 * 64-bit offsets are no longer the ceiling; the 32-bit page id is. The last
-	 * addressable page sits at ~8.8 TB (Integer.MAX_VALUE * 4096). One page
-	 * beyond that, the id itself wraps negative, so the offset is not the next
-	 * offset up but a negative one - a file that large is still unreachable.
+	 * 64-bit offsets are no longer the ceiling; the 32-bit page id is, at ~8.8 TB.
+	 * A page id at or past the cap - including one that has wrapped negative -
+	 * must fail loudly rather than seek somewhere plausible but wrong.
 	 */
 	@Test
-	void testPageIdSpaceStillCapsFilesAtEightPointEightTerabytes() {
-		long lastOffset = RawPage.getOffset(Integer.MAX_VALUE);
-		assertEquals(8796093018112L, lastOffset);
+	void testPageIdPastTheCapFailsLoudly() {
+		assertEquals(8796093018112L, RawPage.MAX_FILE_LEN);
 
-		int pastLastPageId = Integer.MAX_VALUE + 1; // wraps to Integer.MIN_VALUE
-		long pastLastOffset = RawPage.getOffset(pastLastPageId);
+		IllegalStateException atCap = assertThrows(IllegalStateException.class,
+				() -> RawPage.getOffset(RawPage.MAX_PAGE_COUNT));
+		assertTrue(atCap.getMessage().contains(String.valueOf(RawPage.MAX_FILE_LEN)), atCap.getMessage());
 
-		assertNotEquals(lastOffset + RawPage.MAX_PAGE_LEN, pastLastOffset);
-		assertTrue(pastLastOffset < 0);
+		int wrapped = Integer.MAX_VALUE + 1; // wraps to Integer.MIN_VALUE
+		assertThrows(IllegalStateException.class, () -> RawPage.getOffset(wrapped));
+	}
+
+	/**
+	 * A file one page over the cap must be rejected on open, not truncated into a
+	 * negative or wrapped page count.
+	 */
+	@Test
+	void testPageCountRejectsFileOverTheCap() {
+		assertEquals(RawPage.MAX_PAGE_COUNT, RawPage.pageCount("full.db", RawPage.MAX_FILE_LEN));
+		assertEquals(3, RawPage.pageCount("small.db", 3L * RawPage.MAX_PAGE_LEN));
+
+		IllegalStateException tooBig = assertThrows(IllegalStateException.class,
+				() -> RawPage.pageCount("huge.db", RawPage.MAX_FILE_LEN + RawPage.MAX_PAGE_LEN));
+		assertTrue(tooBig.getMessage().contains("huge.db"), tooBig.getMessage());
+		assertTrue(tooBig.getMessage().contains("too large to address"), tooBig.getMessage());
+
+		IllegalStateException ragged = assertThrows(IllegalStateException.class,
+				() -> RawPage.pageCount("ragged.db", RawPage.MAX_PAGE_LEN + 7));
+		assertTrue(ragged.getMessage().contains("not a multiple of pages"), ragged.getMessage());
 	}
 }

@@ -33,6 +33,11 @@ class FileState {
 		lock.lock();
 		try {
 			int pageId = Math.max(diskPageCount(), nextPageId);
+			if (pageId >= RawPage.MAX_PAGE_COUNT) {
+				throw new IllegalStateException("Cannot allocate page " + pageId + " in " + fileId + ": a file holds at "
+						+ "most " + RawPage.MAX_PAGE_COUNT + " pages (" + RawPage.MAX_FILE_LEN + " bytes, ~8.8 TB). "
+						+ "Page ids are signed 32-bit ints, so one more would wrap negative.");
+			}
 			nextPageId = pageId + 1;
 			return pageId;
 		} finally {
@@ -40,15 +45,7 @@ class FileState {
 		}
 	}
 
-	private int diskPageCount() throws ArithmeticException, IllegalStateException {
-		File file = new File(fileId);
-		long fileLength = file.length();
-
-		// all pages should be exactly RawPage.MAX_PAGE_LEN long
-		if (fileLength % RawPage.MAX_PAGE_LEN != 0) {
-			throw new IllegalStateException("File size is not a multiple of pages");
-		}
-
-		return Math.toIntExact(fileLength / RawPage.MAX_PAGE_LEN);
+	private int diskPageCount() throws IllegalStateException {
+		return RawPage.pageCount(fileId, new File(fileId).length());
 	}
 }
