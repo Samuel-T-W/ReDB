@@ -12,6 +12,7 @@ public final class ImdbSchemas {
     public static final int TITLE_BYTES = 512;
     public static final int NAME_BYTES = 128;
     public static final int CATEGORY_BYTES = 24;
+    public static final int TITLE_INDEX_DEGREE = 7;
 
     public static final Map<String, Integer> MOVIES;
     public static final Map<String, Integer> WORKED_ON;

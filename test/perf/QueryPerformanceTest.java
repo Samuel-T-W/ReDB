@@ -3,6 +3,7 @@ package perf;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import buffer.BufferManager;
+import catalog.ImdbSchemas;
 import catalog.IndexEntry;
 import catalog.TableEntry;
 import java.io.File;
@@ -49,8 +50,8 @@ import util.RecordUtils;
  *   P_W_dir = materialized WorkedOn-projection (director only) page count
  *   T_M    = total movie records, s_M = actual query selectivity
  *   N      = (B-1)/2 (BNL block size)
- *   rpp_M  = 104 (records/page for 39-byte Movies records)
- *   rpp_J1 = 83  (records/page for 49-byte Join1-output records)
+ *   rpp_M  = records per page for the production Movies schema
+ *   rpp_J1 = records per page for the explicit Join1 output schema
  */
 public class QueryPerformanceTest {
 
@@ -63,48 +64,40 @@ public class QueryPerformanceTest {
     private static final String RESULTS_CSV  = "report/query_io_results.csv";
 
     // ── schemas ──────────────────────────────────────────────────────────────
-    private static final Map<String, Integer> MOVIES_SCHEMA   = new LinkedHashMap<>();
-    private static final Map<String, Integer> WORKEDON_SCHEMA = new LinkedHashMap<>();
-    private static final Map<String, Integer> PEOPLE_SCHEMA   = new LinkedHashMap<>();
+    private static final Map<String, Integer> MOVIES_SCHEMA = ImdbSchemas.MOVIES;
+    private static final Map<String, Integer> WORKEDON_SCHEMA = ImdbSchemas.WORKED_ON;
+    private static final Map<String, Integer> PEOPLE_SCHEMA = ImdbSchemas.PEOPLE;
     private static final Map<String, Integer> WK_PROJ_SCHEMA  = new LinkedHashMap<>();
     private static final Map<String, Integer> J1_SCHEMA       = new LinkedHashMap<>();
     private static final Map<String, Integer> J2_SCHEMA       = new LinkedHashMap<>();
     private static final Map<String, Integer> OUT_SCHEMA      = new LinkedHashMap<>();
 
     static {
-        MOVIES_SCHEMA.put("movieId", 9);
-        MOVIES_SCHEMA.put("title",  30);
+        WK_PROJ_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
+        WK_PROJ_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
 
-        WORKEDON_SCHEMA.put("movieId",  9);
-        WORKEDON_SCHEMA.put("personId", 10);
-        WORKEDON_SCHEMA.put("category", 20);
+        J1_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
+        J1_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
+        J1_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
 
-        PEOPLE_SCHEMA.put("personId", 10);
-        PEOPLE_SCHEMA.put("name",    105);
+        J2_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
+        J2_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
+        J2_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
+        J2_SCHEMA.put("name", ImdbSchemas.NAME_BYTES);
 
-        WK_PROJ_SCHEMA.put("movieId",  9);
-        WK_PROJ_SCHEMA.put("personId", 10);
-
-        J1_SCHEMA.put("movieId",  9);
-        J1_SCHEMA.put("title",   30);
-        J1_SCHEMA.put("personId", 10);
-
-        J2_SCHEMA.put("movieId",  9);
-        J2_SCHEMA.put("title",   30);
-        J2_SCHEMA.put("personId", 10);
-        J2_SCHEMA.put("name",   105);
-
-        OUT_SCHEMA.put("title", 30);
-        OUT_SCHEMA.put("name", 105);
+        OUT_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
+        OUT_SCHEMA.put("name", ImdbSchemas.NAME_BYTES);
     }
 
     // ── constants for analytical formula ─────────────────────────────────────
     private static final int PAGE_SIZE  = RawPage.MAX_PAGE_LEN; // 4096
     private static final int HEADER     = 4;                    // record-count header bytes
-    private static final int REC_MOVIES  = 9 + 30;             // 39 bytes
-    private static final int REC_J1      = 9 + 30 + 10;        // 49 bytes
-    private static final int RPP_M  = (PAGE_SIZE - HEADER) / REC_MOVIES; // 104
-    private static final int RPP_J1 = (PAGE_SIZE - HEADER) / REC_J1;     // 83
+    private static final int REC_MOVIES = MOVIES_SCHEMA.values().stream()
+            .mapToInt(Integer::intValue).sum();
+    private static final int REC_J1 = J1_SCHEMA.values().stream()
+            .mapToInt(Integer::intValue).sum();
+    private static final int RPP_M = (PAGE_SIZE - HEADER) / REC_MOVIES;
+    private static final int RPP_J1 = (PAGE_SIZE - HEADER) / REC_J1;
 
     // ── test ─────────────────────────────────────────────────────────────────
 
@@ -216,9 +209,9 @@ public class QueryPerformanceTest {
         // Delete stale temp file so materialize starts fresh
         new File(PERF_TMP_DB).delete();
 
-        byte[] startBytes = RecordUtils.toFixedBytes(startTitle, 30);
-        byte[] endBytes   = RecordUtils.toFixedBytes(endTitle,   30);
-        byte[] dirBytes   = RecordUtils.toFixedBytes("director", 20);
+        byte[] startBytes = RecordUtils.toFixedBytes(startTitle, MOVIES_SCHEMA.get("title"));
+        byte[] endBytes = RecordUtils.toFixedBytes(endTitle, MOVIES_SCHEMA.get("title"));
+        byte[] dirBytes = RecordUtils.toFixedBytes("director", WORKEDON_SCHEMA.get("category"));
 
         Scan      movieScan    = new Scan(bm, MOVIES_DB,    MOVIES_SCHEMA);
         Scan      workedonScan = new Scan(bm, WORKEDON_DB,  WORKEDON_SCHEMA);
@@ -254,7 +247,7 @@ public class QueryPerformanceTest {
         BufferManager bm = buildBM(bufSize);
         bm.resetIOCounts();
 
-        byte[] dirBytes = RecordUtils.toFixedBytes("director", 20);
+        byte[] dirBytes = RecordUtils.toFixedBytes("director", WORKEDON_SCHEMA.get("category"));
         Scan workedonScan = new Scan(bm, WORKEDON_DB, WORKEDON_SCHEMA);
         Selection wkSel   = new Selection(workedonScan,
                 rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));

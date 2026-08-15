@@ -1,8 +1,8 @@
 import buffer.BufferManager;
+import catalog.ImdbSchemas;
 import catalog.IndexEntry;
 import catalog.TableEntry;
 import java.io.IOException;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import util.preprocessor.PreProcessorUtils;
 
@@ -17,23 +17,11 @@ public class PreProcessor {
     static final String PEOPLE_DB = "people.db";
     static final String TITLE_IDX = "title.idx";
 
-    static final Map<String, Integer> MOVIES_SCHEMA = new LinkedHashMap<>();
-    static final Map<String, Integer> WORKEDON_SCHEMA = new LinkedHashMap<>();
-    static final Map<String, Integer> PEOPLE_SCHEMA = new LinkedHashMap<>();
+    static final Map<String, Integer> MOVIES_SCHEMA = ImdbSchemas.MOVIES;
+    static final Map<String, Integer> WORKEDON_SCHEMA = ImdbSchemas.WORKED_ON;
+    static final Map<String, Integer> PEOPLE_SCHEMA = ImdbSchemas.PEOPLE;
 
-    static {
-        MOVIES_SCHEMA.put("movieId", 9);
-        MOVIES_SCHEMA.put("title", 30);
-
-        WORKEDON_SCHEMA.put("movieId", 9);
-        WORKEDON_SCHEMA.put("personId", 10);
-        WORKEDON_SCHEMA.put("category", 20);
-
-        PEOPLE_SCHEMA.put("personId", 10);
-        PEOPLE_SCHEMA.put("name", 105);
-    }
-
-    private static final int BTREE_DEGREE = 50;
+    private static final int BTREE_DEGREE = ImdbSchemas.TITLE_INDEX_DEGREE;
     private static final int BUFFER_SIZE = 100;
 
     public static void run() throws IOException {
