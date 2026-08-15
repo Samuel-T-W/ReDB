@@ -79,7 +79,8 @@ public class RunQueryFailureTest {
 		// A corrupt index file makes BTreeManager.openExisting throw partway
 		// through plan construction (after the base Scans are built).
 		IllegalStateException failure = corruptAndRun("title.idx", shared, true);
-		assertTrue(failure.getMessage().contains("Index file size is not a multiple of pages"),
+		assertTrue(failure.getMessage().contains("File size is not a multiple of pages")
+				&& failure.getMessage().contains("title.idx"),
 				"the original openExisting failure must propagate, got: " + failure.getMessage());
 
 		assertNoQueryResidue(shared);

@@ -58,7 +58,7 @@ public class BufferManagerTest {
 
 				// locate disk location
 				int pageId = id;
-				int offset = RawPage.getOffset(pageId);
+				long offset = RawPage.getOffset(pageId);
 				raf.seek(offset);
 
 				// write page
@@ -103,7 +103,7 @@ public class BufferManagerTest {
 		byte[] loaded_data = null;
 
 		try (RandomAccessFile raf = new RandomAccessFile(fileOneName, "r")) {
-			int offset = RawPage.getOffset(pageId);
+			long offset = RawPage.getOffset(pageId);
 			raf.seek(offset);
 			loaded_data = new byte[RawPage.MAX_PAGE_LEN];
 			raf.readFully(loaded_data);

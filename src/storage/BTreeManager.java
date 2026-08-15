@@ -93,12 +93,9 @@ public class BTreeManager implements BTree {
 		if (length == 0) {
 			throw new IllegalStateException("Index file is empty: " + fileId + ". Run pre_process first.");
 		}
-		if (length % RawPage.MAX_PAGE_LEN != 0) {
-			throw new IllegalStateException("Index file size is not a multiple of pages: " + fileId);
-		}
 
 		int rootId = -1;
-		int pageCount = Math.toIntExact(length / RawPage.MAX_PAGE_LEN);
+		int pageCount = RawPage.pageCount(fileId, length);
 		try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
 			byte[] header = new byte[12];
 			for (int pageId = 0; pageId < pageCount; pageId++) {

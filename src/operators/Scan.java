@@ -27,15 +27,7 @@ public class Scan implements Operator {
         this.bm = Objects.requireNonNull(bm, "bm");
         this.fileId = Objects.requireNonNull(fileId, "fileId");
         this.schema = Objects.requireNonNull(schema, "schema");
-        this.numPages = calculatePageCount(fileId);
-    }
-
-    private int calculatePageCount(String fileId) {
-        int fileLength = Math.toIntExact(new File(fileId).length());
-        if (fileLength % RawPage.MAX_PAGE_LEN != 0) {
-            throw new IllegalStateException("File size is not a multiple of pages");
-        }
-        return fileLength / RawPage.MAX_PAGE_LEN;
+        this.numPages = RawPage.pageCount(fileId, new File(fileId).length());
     }
 
     @Override

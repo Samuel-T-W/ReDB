@@ -13,7 +13,6 @@ import java.util.Map;
  * operations.
  */
 public class GenericPage implements DataPage {
-	public static final int MAX_PAGE_LEN = 4096;
 
 	/** Number of bytes reserved at the start of every page for metadata. */
 	private static final int HEADER_SIZE = 4; // 4 bytes numRecords
@@ -172,7 +171,7 @@ public class GenericPage implements DataPage {
 
 		int numRecords = getNumRecords();
 		int usedBytes = HEADER_SIZE + numRecords * this.recordSize;
-		int availBytes = MAX_PAGE_LEN - usedBytes;
+		int availBytes = RawPage.MAX_PAGE_LEN - usedBytes;
 		return availBytes < this.recordSize;
 	}
 
@@ -201,10 +200,6 @@ public class GenericPage implements DataPage {
 	/** Returns the maximum number of records that fit on this page. */
 	public int capacity() {
 
-		return (MAX_PAGE_LEN - HEADER_SIZE) / this.recordSize;
-	}
-
-	public static int getOffset(int pid) {
-		return pid * MAX_PAGE_LEN;
+		return (RawPage.MAX_PAGE_LEN - HEADER_SIZE) / this.recordSize;
 	}
 }
