@@ -12,8 +12,8 @@ SPEC.loader.exec_module(imdb)
 
 
 class PrepareImdbDataTest(unittest.TestCase):
-    def test_default_output_is_root_data_directory(self):
-        self.assertEqual(imdb.REPO_ROOT / "data", imdb.DEFAULT_OUTPUT_DIR)
+    def test_default_output_is_root_imdb_full_directory(self):
+        self.assertEqual(imdb.REPO_ROOT / "data" / "imdb-full", imdb.DEFAULT_OUTPUT_DIR)
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -27,16 +27,15 @@ class PrepareImdbDataTest(unittest.TestCase):
 
     def write_tsv(self, name, header, rows):
         with gzip.open(self.sources / name, "wt", encoding="utf-8", newline="") as output:
-            writer = csv.writer(output, delimiter="\t", lineterminator="\n")
-            writer.writerow(header)
-            writer.writerows(rows)
+            for row in [header, *rows]:
+                output.write("\t".join(row) + "\n")
 
     def test_happy_path_converts_three_rows_from_each_dataset(self):
         self.write_tsv("title.basics.tsv.gz",
             ["tconst", "titleType", "primaryTitle", "originalTitle", "isAdult",
              "startYear", "endYear", "runtimeMinutes", "genres"], [
                 ["tt1", "movie", "Café, Noir", "Café Noir", "0", "2024", r"\N", "95", "Drama,Noir"],
-                ["tt2", "short", "Second", "Second", "0", "1999", r"\N", "12", "Comedy"],
+                ["tt2", "short", '"Rolling in the Deep Dish', '"Rolling in the Deep Dish', "0", "1999", r"\N", "12", "Comedy"],
                 ["tt3", "tvSeries", "Third", "Third", "1", "2010", "2012", "45", r"\N"],
             ])
         self.write_tsv("title.principals.tsv.gz",
@@ -57,7 +56,7 @@ class PrepareImdbDataTest(unittest.TestCase):
         expected = {
             "title.csv": ["movieId,title,startYear,endYear,isAdult,originalTitle,titleType,runtimeMinutes,genres",
                 'tt1,"Café, Noir",2024,,0,Café Noir,movie,95,"Drama,Noir"',
-                "tt2,Second,1999,,0,Second,short,12,Comedy",
+                'tt2,"""Rolling in the Deep Dish",1999,,0,"""Rolling in the Deep Dish",short,12,Comedy',
                 "tt3,Third,2010,2012,1,Third,tvSeries,45,"],
             "workedon.csv": ["movieId,personId,category,ordering,job",
                 "tt1,nm1,director,1,", "tt2,nm2,writer,2,screenplay", "tt3,nm3,actor,3,"],

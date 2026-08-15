@@ -14,7 +14,7 @@ from pathlib import Path
 BASE_URL = "https://datasets.imdbws.com"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_DIR = REPO_ROOT / "data" / "imdb-source"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "data"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "imdb-full"
 NULL = r"\N"
 
 
@@ -73,7 +73,7 @@ def convert(dataset: Dataset, source: Path, output: Path) -> int:
     rows = 0
     try:
         with gzip.open(source, "rt", encoding="utf-8", newline="") as input_file:
-            reader = csv.DictReader(input_file, delimiter="\t")
+            reader = csv.DictReader(input_file, delimiter="\t", quoting=csv.QUOTE_NONE)
             missing = required.difference(reader.fieldnames or ())
             if missing:
                 raise ValueError(f"{source.name} is missing columns: {sorted(missing)}")
