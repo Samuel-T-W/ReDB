@@ -1,15 +1,32 @@
+import catalog.ImdbSchemas;
+import java.nio.charset.StandardCharsets;
 import util.Metrics;
 
 public class Main {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size> [--index] [--metrics]");
+            printUsage();
             System.exit(1);
         }
 
         switch (args[0]) {
-            case "pre_process" -> PreProcessor.run();
+            case "pre_process" -> {
+                if (args.length == 1) {
+                    PreProcessor.run();
+                } else if (args.length == 3 && args[1].equals("--dataset")) {
+                    try {
+                        PreProcessor.run(PreProcessor.Dataset.parse(args[2]));
+                    } catch (IllegalArgumentException e) {
+                        System.err.println(e.getMessage());
+                        printUsage();
+                        System.exit(1);
+                    }
+                } else {
+                    printUsage();
+                    System.exit(1);
+                }
+            }
             case "run_query" -> {
                 if (args.length < 4) {
                     System.err.println("Usage: run_query <start_range> <end_range> <buffer_size>");
@@ -20,12 +37,12 @@ public class Main {
                 }
                 String start = args[1];
                 String end = args[2];
-                if (start.length() > 30) {
-                    System.err.println("Error: start_range exceeds max title length of 30 characters");
+                if (start.getBytes(StandardCharsets.UTF_8).length > ImdbSchemas.TITLE_BYTES) {
+                    System.err.println("Error: start_range exceeds the title field width");
                     System.exit(1);
                 }
-                if (end.length() > 30) {
-                    System.err.println("Error: end_range exceeds max title length of 30 characters");
+                if (end.getBytes(StandardCharsets.UTF_8).length > ImdbSchemas.TITLE_BYTES) {
+                    System.err.println("Error: end_range exceeds the title field width");
                     System.exit(1);
                 }
                 int bufferSize;
@@ -69,5 +86,10 @@ public class Main {
                 System.exit(1);
             }
         }
+    }
+
+    private static void printUsage() {
+        System.err.println("Usage: pre_process [--dataset small|full]");
+        System.err.println("   or: run_query <start> <end> <buffer_size> [--index] [--metrics]");
     }
 }
