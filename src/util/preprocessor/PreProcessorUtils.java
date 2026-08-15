@@ -3,8 +3,10 @@ package util.preprocessor;
 import buffer.BufferManager;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,7 +35,7 @@ public final class PreProcessorUtils {
         numPages++;
         GenericPage gp = new GenericPage(current, schema);
 
-        try (BufferedReader br = new BufferedReader(new FileReader(csvPath))) {
+        try (BufferedReader br = Files.newBufferedReader(Path.of(csvPath), StandardCharsets.UTF_8)) {
             String line = br.readLine(); // skip header
             while ((line = br.readLine()) != null) {
                 String[] cols = parseCsvLine(line);
