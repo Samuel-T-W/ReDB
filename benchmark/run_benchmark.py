@@ -25,7 +25,21 @@ from reporting import (
 )
 
 
-DATABASE_FILES = ("movies.db", "workedon.db", "people.db")
+TITLE_BYTES = 512
+DATABASE_SETS = {
+    "small": {
+        "movies.db": "movies.db",
+        "workedon.db": "workedon.db",
+        "people.db": "people.db",
+        "title.idx": "title.idx",
+    },
+    "full": {
+        "movies.db": "movies-full.db",
+        "workedon.db": "workedon-full.db",
+        "people.db": "people-full.db",
+        "title.idx": "title-full.idx",
+    },
+}
 
 
 class Workload(TypedDict):
@@ -50,6 +64,7 @@ class BenchmarkArgs(argparse.Namespace):
     java_xmx: str | None
     memory_sample_ms: int
     run_label: str | None
+    dataset: str
 
 
 def parse_args() -> BenchmarkArgs:
@@ -112,6 +127,12 @@ def parse_args() -> BenchmarkArgs:
         "--run-label",
         help="Optional human-readable label attached to output rows.",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=DATABASE_SETS,
+        default="small",
+        help="Preprocessed database set to benchmark (default: small).",
+    )
     args = parser.parse_args()
 
     try:
@@ -144,8 +165,11 @@ def load_workloads(path: Path) -> list[Workload]:
     if not workloads:
         raise ValueError(f"{path} contains no workloads")
     for workload in workloads:
-        if len(workload["start_range"]) > 30 or len(workload["end_range"]) > 30:
-            raise ValueError(f"Range exceeds 30 characters in workload {workload['name']}")
+        if any(
+            len(workload[field].encode("utf-8")) > TITLE_BYTES
+            for field in ("start_range", "end_range")
+        ):
+            raise ValueError(f"Range exceeds {TITLE_BYTES} bytes in workload {workload['name']}")
     return workloads
 
 
@@ -187,11 +211,19 @@ def physical_memory_bytes() -> int | None:
         return None
 
 
-def create_worker_dir(root: Path, parent: Path) -> Path:
+def database_files(dataset: str, use_index: bool) -> dict[str, str]:
+    """Map canonical worker filenames to one preprocessed dataset's files."""
+    files = dict(DATABASE_SETS[dataset])
+    if not use_index:
+        files.pop("title.idx")
+    return files
+
+
+def create_worker_dir(root: Path, parent: Path, dataset: str, use_index: bool) -> Path:
     """Create an isolated worker directory with links to shared database files."""
     worker_dir = Path(tempfile.mkdtemp(prefix="redb-worker-", dir=parent))
-    for file_name in DATABASE_FILES:
-        os.symlink(root / file_name, worker_dir / file_name)
+    for worker_name, source_name in database_files(dataset, use_index).items():
+        os.symlink(root / source_name, worker_dir / worker_name)
     return worker_dir
 
 
@@ -206,7 +238,7 @@ def run_query(
     warmup: bool = False,
 ) -> ResultRow:
     """Run one workload in its own JVM and return a raw benchmark result row."""
-    worker_dir = create_worker_dir(root, work_parent)
+    worker_dir = create_worker_dir(root, work_parent, args.dataset, args.index)
     java_command = ["java"]
     if args.java_xmx:
         java_command.append(f"-Xmx{args.java_xmx}")
@@ -325,11 +357,12 @@ def main() -> int:
     root = Path(__file__).resolve().parent.parent
 
     # Queries require the binary databases produced by the preprocessing step.
-    missing = [file_name for file_name in DATABASE_FILES if not (root / file_name).is_file()]
+    required_files = database_files(args.dataset, args.index).values()
+    missing = [file_name for file_name in required_files if not (root / file_name).is_file()]
     if missing:
         print(
             f"Missing preprocessed database files: {', '.join(missing)}\n"
-            "Run ./run.sh pre_process before starting the benchmark.",
+            f"Run ./run.sh pre_process --dataset {args.dataset} before starting the benchmark.",
             file=sys.stderr,
         )
         return 2
@@ -359,6 +392,7 @@ def main() -> int:
         "run_id": run_id,
         "run_label": args.run_label or "",
         "run_created_at_utc": run_created_at,
+        "dataset": args.dataset,
     }
 
     summary_context = {
@@ -407,6 +441,7 @@ def main() -> int:
         "run_id",
         "run_label",
         "run_created_at_utc",
+        "dataset",
         "started_at_utc",
         "concurrency",
         "repetition",
@@ -453,6 +488,7 @@ def main() -> int:
             "use_index": args.index,
             "java_xmx": args.java_xmx,
             "memory_sample_ms": args.memory_sample_ms,
+            "dataset": args.dataset,
         },
         "summaries": summaries,
     }

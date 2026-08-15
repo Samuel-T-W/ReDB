@@ -35,6 +35,14 @@ Create the database files and compile the project:
 mvn compile
 ```
 
+The default uses the small dataset.
+To build and benchmark the full snapshot without replacing the small database files:
+
+```bash
+./run.sh pre_process --dataset full
+python3 benchmark/run_benchmark.py --dataset full
+```
+
 ## Run
 
 Normal benchmark run:
@@ -69,6 +77,7 @@ Useful options:
 
 ```text
 --index                 use the title-index path
+--dataset full          use the separately preprocessed full IMDb snapshot
 --java-xmx 1g           cap each worker JVM's maximum heap
 --memory-sample-ms 50   OS memory sampling interval
 --output-dir            choose the result directory
