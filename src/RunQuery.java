@@ -177,8 +177,8 @@ public class RunQuery {
                         query.outputPath(), StandardCharsets.UTF_8)) {
                     GenericRecord result;
                     while ((result = finalProj.next()) != null) {
-                        String title = new String(result.getFieldBytes("title")).trim();
-                        String name  = new String(result.getFieldBytes("name")).trim();
+                        String title = RecordUtils.fromFixedBytes(result.getFieldBytes("title"));
+                        String name = RecordUtils.fromFixedBytes(result.getFieldBytes("name"));
                         writer.write(title);
                         writer.write(',');
                         writer.write(name);

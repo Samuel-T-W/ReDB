@@ -281,7 +281,7 @@ public class QueryPerformanceTest {
             GenericPage gp = new GenericPage(page, MOVIES_SCHEMA);
             for (int slot = 0; slot < numRec; slot++) {
                 GenericRecord rec = (GenericRecord) gp.getRecord(slot);
-                titles.add(new String(rec.getFieldBytes("title")).trim());
+                titles.add(RecordUtils.fromFixedBytes(rec.getFieldBytes("title")));
             }
             bm.unpinPage(MOVIES_DB, pid);
         }
