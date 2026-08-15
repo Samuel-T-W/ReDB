@@ -120,12 +120,17 @@ public class PageTest {
 	void testPageIdPastTheCapFailsLoudly() {
 		assertEquals(8796093018112L, RawPage.MAX_FILE_LEN);
 
-		IllegalStateException atCap = assertThrows(IllegalStateException.class,
+		UnaddressablePageException atCap = assertThrows(UnaddressablePageException.class,
 				() -> RawPage.getOffset(RawPage.MAX_PAGE_COUNT));
-		assertTrue(atCap.getMessage().contains(String.valueOf(RawPage.MAX_FILE_LEN)), atCap.getMessage());
+		// The offending id, not the shared cap constant: every message in this
+		// family quotes the cap, so only the id identifies which guard fired.
+		assertTrue(atCap.getMessage().contains(String.valueOf(RawPage.MAX_PAGE_COUNT)), atCap.getMessage());
 
 		int wrapped = Integer.MAX_VALUE + 1; // wraps to Integer.MIN_VALUE
-		assertThrows(IllegalStateException.class, () -> RawPage.getOffset(wrapped));
+		UnaddressablePageException wrappedFailure = assertThrows(UnaddressablePageException.class,
+				() -> RawPage.getOffset(wrapped));
+		assertTrue(wrappedFailure.getMessage().contains(String.valueOf(Integer.MIN_VALUE)),
+				wrappedFailure.getMessage());
 	}
 
 	/**
@@ -137,13 +142,16 @@ public class PageTest {
 		assertEquals(RawPage.MAX_PAGE_COUNT, RawPage.pageCount("full.db", RawPage.MAX_FILE_LEN));
 		assertEquals(3, RawPage.pageCount("small.db", 3L * RawPage.MAX_PAGE_LEN));
 
-		IllegalStateException tooBig = assertThrows(IllegalStateException.class,
-				() -> RawPage.pageCount("huge.db", RawPage.MAX_FILE_LEN + RawPage.MAX_PAGE_LEN));
+		long overCap = RawPage.MAX_FILE_LEN + RawPage.MAX_PAGE_LEN;
+		UnaddressablePageException tooBig = assertThrows(UnaddressablePageException.class,
+				() -> RawPage.pageCount("huge.db", overCap));
 		assertTrue(tooBig.getMessage().contains("huge.db"), tooBig.getMessage());
-		assertTrue(tooBig.getMessage().contains("too large to address"), tooBig.getMessage());
+		assertTrue(tooBig.getMessage().contains(String.valueOf(overCap)), tooBig.getMessage());
 
+		// A malformed file is a different failure from an unaddressable one, and
+		// the type says so - matching on message text could not tell them apart.
 		IllegalStateException ragged = assertThrows(IllegalStateException.class,
 				() -> RawPage.pageCount("ragged.db", RawPage.MAX_PAGE_LEN + 7));
-		assertTrue(ragged.getMessage().contains("not a multiple of pages"), ragged.getMessage());
+		assertFalse(ragged instanceof UnaddressablePageException, ragged.getMessage());
 	}
 }

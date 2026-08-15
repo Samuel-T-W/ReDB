@@ -3,6 +3,7 @@ package buffer;
 import java.io.File;
 import java.util.concurrent.locks.ReentrantLock;
 import storage.RawPage;
+import storage.UnaddressablePageException;
 
 /**
  * Per-file runtime state owned by the BufferManager. Currently tracks the next
@@ -34,7 +35,7 @@ class FileState {
 		try {
 			int pageId = Math.max(diskPageCount(), nextPageId);
 			if (pageId >= RawPage.MAX_PAGE_COUNT) {
-				throw new IllegalStateException("Cannot allocate page " + pageId + " in " + fileId + ": a file holds at "
+				throw new UnaddressablePageException("Cannot allocate page " + pageId + " in " + fileId + ": a file holds at "
 						+ "most " + RawPage.MAX_PAGE_COUNT + " pages (" + RawPage.MAX_FILE_LEN + " bytes, ~8.8 TB). "
 						+ "Page ids are signed 32-bit ints, so one more would wrap negative.");
 			}

@@ -55,7 +55,7 @@ public class RawPage implements Page {
 	 */
 	public static long getOffset(int pid) {
 		if (pid < 0 || pid >= MAX_PAGE_COUNT) {
-			throw new IllegalStateException("Page id " + pid + " is outside the addressable range 0.."
+			throw new UnaddressablePageException("Page id " + pid + " is outside the addressable range 0.."
 					+ (MAX_PAGE_COUNT - 1) + " (a negative id means the page id space wrapped). Byte offsets are "
 					+ "64-bit, but page ids are signed 32-bit ints, so a file holds at most " + MAX_FILE_LEN
 					+ " bytes (~8.8 TB) at " + MAX_PAGE_LEN + "-byte pages.");
@@ -67,8 +67,9 @@ public class RawPage implements Page {
 	 * Converts a file length in bytes to the number of pages it holds.
 	 *
 	 * @throws IllegalStateException
-	 *             if the length is not a whole number of pages, or if the file
-	 *             holds more pages than a 32-bit page id can address
+	 *             if the length is not a whole number of pages
+	 * @throws UnaddressablePageException
+	 *             if the file holds more pages than a 32-bit page id can address
 	 */
 	public static int pageCount(String fileId, long fileLength) {
 		if (fileLength % MAX_PAGE_LEN != 0) {
@@ -76,7 +77,7 @@ public class RawPage implements Page {
 					"File size is not a multiple of pages: " + fileId + " is " + fileLength + " bytes");
 		}
 		if (fileLength > MAX_FILE_LEN) {
-			throw new IllegalStateException("File is too large to address: " + fileId + " is " + fileLength
+			throw new UnaddressablePageException("File is too large to address: " + fileId + " is " + fileLength
 					+ " bytes, over the " + MAX_FILE_LEN + "-byte (~8.8 TB) cap. Byte offsets are 64-bit, but page ids "
 					+ "are signed 32-bit ints, so only pages 0.." + (MAX_PAGE_COUNT - 1) + " are reachable.");
 		}
