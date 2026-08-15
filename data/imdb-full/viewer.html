@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>ReDB IMDb Snapshot</title>
+  <style>
+    :root { color-scheme: dark; --ink:#f5f2e9; --muted:#a8a497; --line:#343329; --panel:#1a1b17; --accent:#e5b95c; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:#11120f; color:var(--ink); font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    header { padding:40px clamp(20px,5vw,72px) 28px; border-bottom:1px solid var(--line); background:radial-gradient(circle at 85% 0,#38311c 0,transparent 35%); }
+    .eyebrow { color:var(--accent); letter-spacing:.16em; text-transform:uppercase; font-size:11px; }
+    h1 { margin:8px 0 6px; font:600 clamp(32px,5vw,64px)/1.05 Georgia,serif; letter-spacing:-.03em; }
+    header p { color:var(--muted); margin:0; max-width:720px; }
+    main { padding:24px clamp(20px,5vw,72px) 56px; }
+    .summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:24px; }
+    .metric { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+    .metric strong { display:block; font-size:20px; color:var(--ink); }
+    .metric span { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+    .tabs { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+    button,input { font:inherit; }
+    .tab { color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:999px; padding:8px 14px; cursor:pointer; }
+    .tab.active { color:#17150f; background:var(--accent); border-color:var(--accent); }
+    .toolbar { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+    input { flex:1; min-width:160px; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; }
+    .status { color:var(--muted); white-space:nowrap; }
+    .table-wrap { overflow:auto; max-height:62vh; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    table { width:100%; border-collapse:collapse; white-space:nowrap; }
+    th,td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; max-width:360px; overflow:hidden; text-overflow:ellipsis; }
+    th { position:sticky; top:0; background:#25251f; color:var(--accent); z-index:1; }
+    tbody tr:hover { background:#22231e; }
+    .null { color:#66675f; font-style:italic; }
+    footer { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; color:var(--muted); }
+    .page-button { color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:7px 11px; cursor:pointer; }
+    .page-button:disabled { opacity:.35; cursor:default; }
+    @media (max-width:800px) { .summary { grid-template-columns:repeat(2,1fr); } .toolbar,footer { align-items:stretch; flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">ReDB data inspection</div>
+    <h1>IMDb full snapshot</h1>
+    <p>Compare the original real IMDb subset with the new full official IMDb snapshot. Preview rows stream from the real files without loading them fully into browser memory.</p>
+  </header>
+  <main>
+    <section class="summary" id="summary"></section>
+    <nav class="tabs" id="tabs" aria-label="Dataset"></nav>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Filter the 250-row preview" aria-label="Filter preview rows">
+      <span class="status" id="status">Choose a dataset</span>
+    </div>
+    <div class="table-wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div>
+    <footer>
+      <span id="page-info"></span>
+      <div><button class="page-button" id="previous">Previous</button> <button class="page-button" id="next">Next</button></div>
+    </footer>
+  </main>
+  <script>
+    const datasets = [
+      { label:'Full Movies', file:'title.csv', rows:12717779 },
+      { label:'Full WorkedOn', file:'workedon.csv', rows:101214175 },
+      { label:'Full People', file:'name.csv', rows:15576470 },
+      { label:'Original Movies', file:'../imdb-original/title.csv', rows:474893 },
+      { label:'Original WorkedOn', file:'../imdb-original/workedon.csv', rows:4290961 },
+      { label:'Original People', file:'../imdb-original/name.csv', rows:913740 },
+    ];
+    const previewLimit = 250, pageSize = 25, cache = new Map();
+    let current = datasets[0], filtered = [], page = 0;
+    const $ = id => document.getElementById(id);
+    const formatBytes = bytes => bytes >= 1e9
+      ? `${bytes.toLocaleString()} bytes · ${(bytes/1e9).toFixed(2)} GB · ${(bytes/2**30).toFixed(2)} GiB`
+      : `${bytes.toLocaleString()} bytes · ${(bytes/1e6).toFixed(2)} MB · ${(bytes/2**20).toFixed(2)} MiB`;
+    const compactSize = bytes => bytes >= 1e9 ? `${(bytes/1e9).toFixed(2)} GB` : `${(bytes/1e6).toFixed(2)} MB`;
+    function parseCsv(line) {
+      const fields=[]; let value='', quoted=false;
+      for (let i=0;i<line.length;i++) {
+        const char=line[i];
+        if (char==='"' && quoted && line[i+1]==='"') { value+='"'; i++; }
+        else if (char==='"') quoted=!quoted;
+        else if (char===',' && !quoted) { fields.push(value); value=''; }
+        else value+=char;
+      }
+      fields.push(value); return fields;
+    }
+    async function preview(dataset) {
+      if (cache.has(dataset.file)) return cache.get(dataset.file);
+      $('status').textContent=`Loading ${dataset.label} preview...`;
+      const response=await fetch(dataset.file), reader=response.body.getReader(), decoder=new TextDecoder();
+      let text='';
+      while ((text.match(/\n/g)||[]).length <= previewLimit) {
+        const {value,done}=await reader.read();
+        if (done) break;
+        text+=decoder.decode(value,{stream:true});
+      }
+      await reader.cancel();
+      const lines=text.split(/\r?\n/).slice(0,previewLimit+1);
+      const result={ header:parseCsv(lines[0]), rows:lines.slice(1).filter(Boolean).map(parseCsv), bytes:Number(response.headers.get('content-length')) };
+      cache.set(dataset.file,result); return result;
+    }
+    function render() {
+      const data=cache.get(current.file), start=page*pageSize, shown=filtered.slice(start,start+pageSize);
+      $('head').innerHTML=`<tr>${data.header.map(x=>`<th>${escapeHtml(x)}</th>`).join('')}</tr>`;
+      $('body').innerHTML=shown.map(row=>`<tr>${row.map(x=>`<td>${x ? escapeHtml(x) : '<span class="null">empty</span>'}</td>`).join('')}</tr>`).join('');
+      $('page-info').textContent=`Preview rows ${filtered.length ? start+1 : 0}-${Math.min(start+pageSize,filtered.length)} of ${filtered.length}`;
+      $('previous').disabled=page===0; $('next').disabled=start+pageSize>=filtered.length;
+      $('status').textContent=`${current.rows.toLocaleString()} rows · ${formatBytes(data.bytes)}`;
+    }
+    function escapeHtml(value) { const node=document.createElement('div'); node.textContent=value; return node.innerHTML; }
+    async function select(dataset) {
+      current=dataset; page=0; $('search').value='';
+      document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.file===dataset.file));
+      const data=await preview(dataset); filtered=data.rows; render();
+    }
+    $('tabs').innerHTML=datasets.map(x=>`<button class="tab" data-file="${x.file}">${x.label}</button>`).join('');
+    document.querySelectorAll('.tab').forEach(button=>button.onclick=()=>select(datasets.find(x=>x.file===button.dataset.file)));
+    $('search').oninput=event=>{ const query=event.target.value.toLowerCase(), data=cache.get(current.file); filtered=data.rows.filter(row=>row.some(x=>x.toLowerCase().includes(query))); page=0; render(); };
+    $('previous').onclick=()=>{ page--; render(); }; $('next').onclick=()=>{ page++; render(); };
+    Promise.all(datasets.map(async dataset=>({dataset,data:await preview(dataset)}))).then(results=>{
+      const total=results.reduce((sum,x)=>sum+x.data.bytes,0);
+      $('summary').innerHTML=[...results.map(x=>`<div class="metric"><strong>${compactSize(x.data.bytes)}</strong><span>${x.dataset.label} · ${x.dataset.rows.toLocaleString()} rows</span></div>`),`<div class="metric"><strong>${compactSize(total)}</strong><span>Total CSV size</span></div>`].join('');
+      select(datasets[0]);
+    });
+  </script>
+</body>
+</html>
