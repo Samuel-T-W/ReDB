@@ -1,6 +1,8 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import catalog.ImdbSchemas;
 import org.junit.jupiter.api.Test;
 
 class PreProcessorDatasetTest {
@@ -16,19 +18,25 @@ class PreProcessorDatasetTest {
         assertEquals("workedon.db", dataset.workedOnDb);
         assertEquals("people.db", dataset.peopleDb);
         assertEquals("title.idx", dataset.titleIndex);
+        assertEquals(ImdbSchemas.MOVIES, dataset.moviesSchema);
+        assertEquals(ImdbSchemas.WORKED_ON, dataset.workedOnSchema);
+        assertEquals(ImdbSchemas.PEOPLE, dataset.peopleSchema);
     }
 
     @Test
     void fullDatasetUsesConvertedInputsAndSeparateOutputs() {
         PreProcessor.Dataset dataset = PreProcessor.Dataset.FULL;
 
-        assertEquals("data/imdb-full/title.csv", dataset.moviesCsv);
-        assertEquals("data/imdb-full/workedon.csv", dataset.workedOnCsv);
-        assertEquals("data/imdb-full/name.csv", dataset.peopleCsv);
+        assertEquals("data/imdb-benchmark/title.csv", dataset.moviesCsv);
+        assertEquals("data/imdb-benchmark/workedon.csv", dataset.workedOnCsv);
+        assertEquals("data/imdb-benchmark/name.csv", dataset.peopleCsv);
         assertEquals("movies-full.db", dataset.moviesDb);
         assertEquals("workedon-full.db", dataset.workedOnDb);
         assertEquals("people-full.db", dataset.peopleDb);
-        assertEquals("title-full.idx", dataset.titleIndex);
+        assertNull(dataset.titleIndex);
+        assertEquals(ImdbSchemas.BENCHMARK_MOVIES, dataset.moviesSchema);
+        assertEquals(ImdbSchemas.BENCHMARK_WORKED_ON, dataset.workedOnSchema);
+        assertEquals(ImdbSchemas.BENCHMARK_PEOPLE, dataset.peopleSchema);
     }
 
     @Test
