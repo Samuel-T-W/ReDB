@@ -30,13 +30,12 @@ public final class PreProcessorUtils {
             String fileId,
             Map<String, Integer> schema)
             throws IOException {
-        int numPages = 0;
-        Page current = bm.createPage(fileId, null);
-        numPages++;
-        GenericPage gp = new GenericPage(current, schema);
-
         try (BufferedReader br = Files.newBufferedReader(Path.of(csvPath), StandardCharsets.UTF_8)) {
-            String line = br.readLine(); // skip header
+            validateHeader(csvPath, schema, br.readLine());
+            int numPages = 1;
+            Page current = bm.createPage(fileId, null);
+            GenericPage gp = new GenericPage(current, schema);
+            String line;
             while ((line = br.readLine()) != null) {
                 String[] cols = parseCsvLine(line);
                 GenericRecord rec = buildRecord(schema, cols);
@@ -46,15 +45,18 @@ public final class PreProcessorUtils {
                     current = bm.createPage(fileId, null);
                     numPages++;
                     gp = new GenericPage(current, schema);
-                    gp.insertRecord(rec);
+                    if (gp.insertRecord(rec) == -1) {
+                        throw new IllegalArgumentException(
+                                "Schema record is too large for an empty page: " + schema);
+                    }
                 }
                 bm.markDirty(fileId, current.getPid());
             }
-        }
 
-        bm.unpinPage(fileId, current.getPid());
-        bm.force();
-        return numPages;
+            bm.unpinPage(fileId, current.getPid());
+            bm.force();
+            return numPages;
+        }
     }
 
     public static void resetFile(String path) throws IOException {
@@ -104,6 +106,20 @@ public final class PreProcessorUtils {
             i++;
         }
         return rec;
+    }
+
+    private static void validateHeader(
+            String csvPath, Map<String, Integer> schema, String headerLine) throws IOException {
+        if (headerLine == null) {
+            throw new IOException(csvPath + " is empty");
+        }
+        String[] actual = parseCsvLine(headerLine);
+        List<String> expected = new ArrayList<>(schema.keySet());
+        if (actual.length > expected.size()
+                || !expected.subList(0, actual.length).equals(Arrays.asList(actual))) {
+            throw new IOException(
+                    csvPath + " header must be a prefix of " + expected + ", got " + Arrays.toString(actual));
+        }
     }
 
     private static String[] parseCsvLine(String line) {
