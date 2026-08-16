@@ -73,20 +73,20 @@ public class QueryPerformanceTest {
     private static final Map<String, Integer> OUT_SCHEMA      = new LinkedHashMap<>();
 
     static {
-        WK_PROJ_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
-        WK_PROJ_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
+        WK_PROJ_SCHEMA.put("movieId", MOVIES_SCHEMA.get("movieId"));
+        WK_PROJ_SCHEMA.put("personId", PEOPLE_SCHEMA.get("personId"));
 
-        J1_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
-        J1_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
-        J1_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
+        J1_SCHEMA.put("movieId", MOVIES_SCHEMA.get("movieId"));
+        J1_SCHEMA.put("title", MOVIES_SCHEMA.get("title"));
+        J1_SCHEMA.put("personId", PEOPLE_SCHEMA.get("personId"));
 
-        J2_SCHEMA.put("movieId", ImdbSchemas.MOVIE_ID_BYTES);
-        J2_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
-        J2_SCHEMA.put("personId", ImdbSchemas.PERSON_ID_BYTES);
-        J2_SCHEMA.put("name", ImdbSchemas.NAME_BYTES);
+        J2_SCHEMA.put("movieId", MOVIES_SCHEMA.get("movieId"));
+        J2_SCHEMA.put("title", MOVIES_SCHEMA.get("title"));
+        J2_SCHEMA.put("personId", PEOPLE_SCHEMA.get("personId"));
+        J2_SCHEMA.put("name", PEOPLE_SCHEMA.get("name"));
 
-        OUT_SCHEMA.put("title", ImdbSchemas.TITLE_BYTES);
-        OUT_SCHEMA.put("name", ImdbSchemas.NAME_BYTES);
+        OUT_SCHEMA.put("title", MOVIES_SCHEMA.get("title"));
+        OUT_SCHEMA.put("name", PEOPLE_SCHEMA.get("name"));
     }
 
     // ── constants for analytical formula ─────────────────────────────────────

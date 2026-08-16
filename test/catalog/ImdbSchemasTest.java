@@ -1,9 +1,6 @@
 package catalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import storage.RawPage;
@@ -11,41 +8,35 @@ import storage.RawPage;
 class ImdbSchemasTest {
 
     @Test
-    void schemasFollowConverterColumnOrder() {
+    void smallSchemasKeepExistingPhysicalLayout() {
+        assertEquals(Map.of("movieId", 9, "title", 30), ImdbSchemas.MOVIES);
         assertEquals(
-                List.of(
-                        "movieId", "title", "startYear", "endYear", "isAdult",
-                        "originalTitle", "titleType", "runtimeMinutes", "genres"),
-                List.copyOf(ImdbSchemas.MOVIES.keySet()));
-        assertEquals(
-                List.of("movieId", "personId", "category", "ordering", "job"),
-                List.copyOf(ImdbSchemas.WORKED_ON.keySet()));
-        assertEquals(
-                List.of("personId", "name", "birthYear", "deathYear", "primaryProfession"),
-                List.copyOf(ImdbSchemas.PEOPLE.keySet()));
+                Map.of("movieId", 9, "personId", 10, "category", 20),
+                ImdbSchemas.WORKED_ON);
+        assertEquals(Map.of("personId", 10, "name", 105), ImdbSchemas.PEOPLE);
     }
 
     @Test
-    void legacyColumnsRemainPrefixes() {
-        assertEquals(List.of("movieId", "title"), firstFields(ImdbSchemas.MOVIES, 2));
+    void compactSchemasFitSnapshotHeapsBelowTenGibibytes() {
+        assertEquals(Map.of("movieId", 8, "title", 482), ImdbSchemas.BENCHMARK_MOVIES);
         assertEquals(
-                List.of("movieId", "personId", "category"),
-                firstFields(ImdbSchemas.WORKED_ON, 3));
-        assertEquals(List.of("personId", "name"), firstFields(ImdbSchemas.PEOPLE, 2));
-    }
+                Map.of("movieId", 8, "personId", 8, "category", 1),
+                ImdbSchemas.BENCHMARK_WORKED_ON);
+        assertEquals(Map.of("personId", 8, "name", 105), ImdbSchemas.BENCHMARK_PEOPLE);
+        assertEquals("6", ImdbSchemas.BENCHMARK_DIRECTOR);
 
-    @Test
-    void everyRecordFitsOnOnePage() {
-        assertTrue(recordSize(ImdbSchemas.MOVIES) <= RawPage.MAX_PAGE_LEN - Integer.BYTES);
-        assertTrue(recordSize(ImdbSchemas.WORKED_ON) <= RawPage.MAX_PAGE_LEN - Integer.BYTES);
-        assertTrue(recordSize(ImdbSchemas.PEOPLE) <= RawPage.MAX_PAGE_LEN - Integer.BYTES);
-    }
-
-    private static List<String> firstFields(Map<String, Integer> schema, int count) {
-        return schema.keySet().stream().limit(count).toList();
+        long pages = pageCount(12_717_779, ImdbSchemas.BENCHMARK_MOVIES)
+                + pageCount(101_214_175, ImdbSchemas.BENCHMARK_WORKED_ON)
+                + pageCount(15_576_470, ImdbSchemas.BENCHMARK_PEOPLE);
+        assertEquals(10_011_152_384L, pages * RawPage.MAX_PAGE_LEN);
     }
 
     private static int recordSize(Map<String, Integer> schema) {
         return schema.values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    private static long pageCount(long rows, Map<String, Integer> schema) {
+        int rowsPerPage = (RawPage.MAX_PAGE_LEN - Integer.BYTES) / recordSize(schema);
+        return (rows + rowsPerPage - 1) / rowsPerPage;
     }
 }
