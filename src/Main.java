@@ -1,4 +1,3 @@
-import catalog.ImdbSchemas;
 import java.nio.charset.StandardCharsets;
 import util.Metrics;
 
@@ -37,14 +36,6 @@ public class Main {
                 }
                 String start = args[1];
                 String end = args[2];
-                if (start.getBytes(StandardCharsets.UTF_8).length > ImdbSchemas.TITLE_BYTES) {
-                    System.err.println("Error: start_range exceeds the title field width");
-                    System.exit(1);
-                }
-                if (end.getBytes(StandardCharsets.UTF_8).length > ImdbSchemas.TITLE_BYTES) {
-                    System.err.println("Error: end_range exceeds the title field width");
-                    System.exit(1);
-                }
                 int bufferSize;
                 try {
                     bufferSize = Integer.parseInt(args[3]);
@@ -61,10 +52,25 @@ public class Main {
                 // --index uses the B+ tree access method; --metrics prints timing/memory.
                 boolean useIndex = false;
                 boolean metrics = false;
+                PreProcessor.Dataset dataset = PreProcessor.Dataset.SMALL;
                 for (int i = 4; i < args.length; i++) {
                     switch (args[i]) {
                         case "--index" -> useIndex = true;
                         case "--metrics" -> metrics = true;
+                        case "--dataset" -> {
+                            if (++i == args.length) {
+                                System.err.println("Missing value after --dataset");
+                                System.exit(1);
+                                return;
+                            }
+                            try {
+                                dataset = PreProcessor.Dataset.parse(args[i]);
+                            } catch (IllegalArgumentException e) {
+                                System.err.println(e.getMessage());
+                                System.exit(1);
+                                return;
+                            }
+                        }
                         default -> {
                             System.err.println("Unknown run_query option: " + args[i]);
                             System.exit(1);
@@ -72,10 +78,21 @@ public class Main {
                         }
                     }
                 }
+                int titleBytes = dataset.moviesSchema.get("title");
+                if (start.getBytes(StandardCharsets.UTF_8).length > titleBytes
+                        || end.getBytes(StandardCharsets.UTF_8).length > titleBytes) {
+                    System.err.println("Error: title range exceeds the dataset's title field width");
+                    System.exit(1);
+                }
+                if (dataset == PreProcessor.Dataset.FULL && useIndex) {
+                    System.err.println("Error: the full benchmark dataset does not build an index");
+                    System.exit(1);
+                }
 
                 // Time only the query execution, excluding arg parsing and startup.
                 long startNanos = System.nanoTime();
-                long resultCount = RunQuery.run(start, end, bufferSize, useIndex);
+                long resultCount = RunQuery.run(
+                        start, end, bufferSize, useIndex, dataset == PreProcessor.Dataset.FULL);
                 long elapsedNanos = System.nanoTime() - startNanos;
                 if (metrics) {
                     Metrics.report(elapsedNanos, resultCount);
@@ -90,6 +107,8 @@ public class Main {
 
     private static void printUsage() {
         System.err.println("Usage: pre_process [--dataset small|full]");
-        System.err.println("   or: run_query <start> <end> <buffer_size> [--index] [--metrics]");
+        System.err.println(
+                "   or: run_query <start> <end> <buffer_size>"
+                        + " [--dataset small|full] [--index] [--metrics]");
     }
 }

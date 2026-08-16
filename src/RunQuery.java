@@ -43,9 +43,34 @@ public class RunQuery {
             String endRange,
             int bufferSize,
             boolean useIndex) throws IOException {
+        return run(startRange, endRange, bufferSize, useIndex, false);
+    }
+
+    public static long run(
+            String startRange,
+            String endRange,
+            int bufferSize,
+            boolean useIndex,
+            boolean fullDataset) throws IOException {
+        Map<String, Integer> moviesSchema =
+                fullDataset ? ImdbSchemas.BENCHMARK_MOVIES : MOVIES_SCHEMA;
+        Map<String, Integer> workedOnSchema =
+                fullDataset ? ImdbSchemas.BENCHMARK_WORKED_ON : WORKEDON_SCHEMA;
+        Map<String, Integer> peopleSchema =
+                fullDataset ? ImdbSchemas.BENCHMARK_PEOPLE : PEOPLE_SCHEMA;
         BufferManager bm = new BufferManager(bufferSize);
-        registerCatalog(bm);
-        return run(startRange, endRange, bufferSize, useIndex, bm, Path.of(QUERY_RESULTS));
+        registerCatalog(bm, moviesSchema, workedOnSchema, peopleSchema, useIndex);
+        return run(
+                startRange,
+                endRange,
+                bufferSize,
+                useIndex,
+                bm,
+                Path.of(QUERY_RESULTS),
+                moviesSchema,
+                workedOnSchema,
+                peopleSchema,
+                fullDataset ? ImdbSchemas.BENCHMARK_DIRECTOR : "director");
     }
 
     /**
@@ -66,6 +91,30 @@ public class RunQuery {
             boolean useIndex,
             BufferManager bm,
             Path outputPath) throws IOException {
+        return run(
+                startRange,
+                endRange,
+                frameBudget,
+                useIndex,
+                bm,
+                outputPath,
+                MOVIES_SCHEMA,
+                WORKEDON_SCHEMA,
+                PEOPLE_SCHEMA,
+                "director");
+    }
+
+    private static long run(
+            String startRange,
+            String endRange,
+            int frameBudget,
+            boolean useIndex,
+            BufferManager bm,
+            Path outputPath,
+            Map<String, Integer> moviesSchema,
+            Map<String, Integer> workedOnSchema,
+            Map<String, Integer> peopleSchema,
+            String directorValue) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
         int N = (frameBudget - 1) / 2;
         if (N < 1) {
@@ -77,28 +126,28 @@ public class RunQuery {
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------
             Map<String, Integer> wkProj_ = new LinkedHashMap<>();
-            wkProj_.put("movieId", MOVIES_SCHEMA.get("movieId"));
-            wkProj_.put("personId", PEOPLE_SCHEMA.get("personId"));
+            wkProj_.put("movieId", moviesSchema.get("movieId"));
+            wkProj_.put("personId", peopleSchema.get("personId"));
             Map<String, Integer> wkProjSchema = Collections.unmodifiableMap(wkProj_);
             String workedonTmp = query.tempFileId("workedon-proj", ".db");
             bm.register(new TableEntry(workedonTmp, wkProjSchema));
 
             // ---- Leaf operators ---------------------------------------------
-            Scan workedonScan = new Scan(bm, WORKEDON_DB,  WORKEDON_SCHEMA);
-            Scan peopleScan   = new Scan(bm, PEOPLE_DB,    PEOPLE_SCHEMA);
+            Scan workedonScan = new Scan(bm, WORKEDON_DB, workedOnSchema);
+            Scan peopleScan   = new Scan(bm, PEOPLE_DB, peopleSchema);
 
             // ---- Movies access: index range scan OR scan + selection --------
-            int titleBytes = MOVIES_SCHEMA.get("title");
+            int titleBytes = moviesSchema.get("title");
             byte[] startBytes = RecordUtils.toFixedBytes(startRange, titleBytes);
             byte[] endBytes   = RecordUtils.toFixedBytes(endRange, titleBytes);
             Operator movieSel;
             if (useIndex) {
                 BTreeManager titleIdx = BTreeManager.openExisting(
-                        BTREE_DEGREE, TITLE_IDX, bm, MOVIES_SCHEMA.get("title"));
-                movieSel = new IndexScan(bm, MOVIES_DB, MOVIES_SCHEMA, titleIdx,
+                        BTREE_DEGREE, TITLE_IDX, bm, moviesSchema.get("title"));
+                movieSel = new IndexScan(bm, MOVIES_DB, moviesSchema, titleIdx,
                         new K(startBytes), new K(endBytes));
             } else {
-                Scan movieScan = new Scan(bm, MOVIES_DB, MOVIES_SCHEMA);
+                Scan movieScan = new Scan(bm, MOVIES_DB, moviesSchema);
                 movieSel = new Selection(movieScan, rec -> {
                     byte[] t = rec.getFieldBytes("title");
                     return Arrays.compare(t, startBytes) >= 0
@@ -108,7 +157,7 @@ public class RunQuery {
 
             // ---- Selection on WorkedOn: category = "director" ---------------
             byte[] dirBytes = RecordUtils.toFixedBytes(
-                    "director", WORKEDON_SCHEMA.get("category"));
+                    directorValue, workedOnSchema.get("category"));
             Selection wkSel = new Selection(workedonScan,
                     rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));
 
@@ -117,35 +166,35 @@ public class RunQuery {
 
             // ---- Join 1: Movies ⋈ WorkedOn on movieId -----------------------
             Map<String, Integer> j1_ = new LinkedHashMap<>();
-            j1_.put("movieId", MOVIES_SCHEMA.get("movieId"));
-            j1_.put("title", MOVIES_SCHEMA.get("title"));
-            j1_.put("personId", PEOPLE_SCHEMA.get("personId"));
+            j1_.put("movieId", moviesSchema.get("movieId"));
+            j1_.put("title", moviesSchema.get("title"));
+            j1_.put("personId", peopleSchema.get("personId"));
             Map<String, Integer> j1Schema = Collections.unmodifiableMap(j1_);
 
             Join join1 = new Join(
                     movieSel, wkProj,
                     "movieId", "movieId",
-                    MOVIES_SCHEMA, wkProjSchema, j1Schema,
+                    moviesSchema, wkProjSchema, j1Schema,
                     bm, query.scratchFileId("bnl-outer-0"), N);
 
             // ---- Join 2: Join1 ⋈ People on personId -------------------------
             Map<String, Integer> j2_ = new LinkedHashMap<>();
-            j2_.put("movieId", MOVIES_SCHEMA.get("movieId"));
-            j2_.put("title", MOVIES_SCHEMA.get("title"));
-            j2_.put("personId", PEOPLE_SCHEMA.get("personId"));
-            j2_.put("name", PEOPLE_SCHEMA.get("name"));
+            j2_.put("movieId", moviesSchema.get("movieId"));
+            j2_.put("title", moviesSchema.get("title"));
+            j2_.put("personId", peopleSchema.get("personId"));
+            j2_.put("name", peopleSchema.get("name"));
             Map<String, Integer> j2Schema = Collections.unmodifiableMap(j2_);
 
             Join join2 = new Join(
                     join1, peopleScan,
                     "personId", "personId",
-                    j1Schema, PEOPLE_SCHEMA, j2Schema,
+                    j1Schema, peopleSchema, j2Schema,
                     bm, query.scratchFileId("bnl-outer-1"), N);
 
             // ---- Final pipelined projection: → {title, name} ----------------
             Map<String, Integer> out_ = new LinkedHashMap<>();
-            out_.put("title", MOVIES_SCHEMA.get("title"));
-            out_.put("name", PEOPLE_SCHEMA.get("name"));
+            out_.put("title", moviesSchema.get("title"));
+            out_.put("name", peopleSchema.get("name"));
             Map<String, Integer> outSchema = Collections.unmodifiableMap(out_);
 
             Project finalProj = new Project(join2, outSchema);
@@ -206,10 +255,21 @@ public class RunQuery {
      * overwrites it with an identical one.
      */
     public static void registerCatalog(BufferManager bm) {
-        bm.register(new TableEntry(MOVIES_DB,    MOVIES_SCHEMA));
-        bm.register(new TableEntry(WORKEDON_DB,  WORKEDON_SCHEMA));
-        bm.register(new TableEntry(PEOPLE_DB,    PEOPLE_SCHEMA));
-        bm.register(new IndexEntry(TITLE_IDX,    MOVIES_SCHEMA.get("title")));
+        registerCatalog(bm, MOVIES_SCHEMA, WORKEDON_SCHEMA, PEOPLE_SCHEMA, true);
+    }
+
+    private static void registerCatalog(
+            BufferManager bm,
+            Map<String, Integer> moviesSchema,
+            Map<String, Integer> workedOnSchema,
+            Map<String, Integer> peopleSchema,
+            boolean useIndex) {
+        bm.register(new TableEntry(MOVIES_DB, moviesSchema));
+        bm.register(new TableEntry(WORKEDON_DB, workedOnSchema));
+        bm.register(new TableEntry(PEOPLE_DB, peopleSchema));
+        if (useIndex) {
+            bm.register(new IndexEntry(TITLE_IDX, moviesSchema.get("title")));
+        }
     }
 
     private static final class QueryContext {
