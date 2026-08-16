@@ -43,9 +43,9 @@ To build and benchmark the full snapshot without replacing the small database fi
 python3 benchmark/run_benchmark.py --dataset full
 ```
 
-The full benchmark CSVs keep only the columns read by this query and use compact,
-lossless IMDb identifier and category codes.
-The resulting three heap files are projected at 9.324 GiB for the 2026-08-15 snapshot.
+The full benchmark CSVs keep only the columns read by this query while preserving
+the original real IMDb CSV identifier prefixes and category values.
+The resulting three heap files are projected at 11.547 GiB for the 2026-08-15 snapshot.
 The full benchmark is scan-only and does not build a title index.
 
 ## Run

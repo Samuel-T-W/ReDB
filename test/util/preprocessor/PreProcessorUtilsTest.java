@@ -27,11 +27,11 @@ class PreProcessorUtilsTest {
         Path csv = tempDir.resolve("title.csv");
         Files.writeString(
                 csv,
-                "movieId,title\n10001000,\"Café, Noir\"\n");
+                "movieId,title\ntt10001000,\"Café, Noir\"\n");
 
         GenericRecord record = loadFirstRecord(csv, ImdbSchemas.BENCHMARK_MOVIES);
 
-        assertEquals("10001000", value(record, "movieId"));
+        assertEquals("tt10001000", value(record, "movieId"));
         assertEquals("Café, Noir", value(record, "title"));
     }
 

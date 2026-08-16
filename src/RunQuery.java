@@ -69,8 +69,7 @@ public class RunQuery {
                 Path.of(QUERY_RESULTS),
                 moviesSchema,
                 workedOnSchema,
-                peopleSchema,
-                fullDataset ? ImdbSchemas.BENCHMARK_DIRECTOR : "director");
+                peopleSchema);
     }
 
     /**
@@ -100,8 +99,7 @@ public class RunQuery {
                 outputPath,
                 MOVIES_SCHEMA,
                 WORKEDON_SCHEMA,
-                PEOPLE_SCHEMA,
-                "director");
+                PEOPLE_SCHEMA);
     }
 
     private static long run(
@@ -113,8 +111,7 @@ public class RunQuery {
             Path outputPath,
             Map<String, Integer> moviesSchema,
             Map<String, Integer> workedOnSchema,
-            Map<String, Integer> peopleSchema,
-            String directorValue) throws IOException {
+            Map<String, Integer> peopleSchema) throws IOException {
         // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
         int N = (frameBudget - 1) / 2;
         if (N < 1) {
@@ -157,7 +154,7 @@ public class RunQuery {
 
             // ---- Selection on WorkedOn: category = "director" ---------------
             byte[] dirBytes = RecordUtils.toFixedBytes(
-                    directorValue, workedOnSchema.get("category"));
+                    "director", workedOnSchema.get("category"));
             Selection wkSel = new Selection(workedonScan,
                     rec -> Arrays.equals(rec.getFieldBytes("category"), dirBytes));
 

@@ -8,7 +8,6 @@ import java.util.Map;
 public final class ImdbSchemas {
 
     public static final int TITLE_INDEX_DEGREE = 50;
-    public static final String BENCHMARK_DIRECTOR = "6";
 
     public static final Map<String, Integer> MOVIES;
     public static final Map<String, Integer> WORKED_ON;
@@ -35,18 +34,18 @@ public final class ImdbSchemas {
         PEOPLE = Collections.unmodifiableMap(people);
 
         Map<String, Integer> benchmarkMovies = new LinkedHashMap<>();
-        benchmarkMovies.put("movieId", 8);
+        benchmarkMovies.put("movieId", 10);
         benchmarkMovies.put("title", 482);
         BENCHMARK_MOVIES = Collections.unmodifiableMap(benchmarkMovies);
 
         Map<String, Integer> benchmarkWorkedOn = new LinkedHashMap<>();
-        benchmarkWorkedOn.put("movieId", 8);
-        benchmarkWorkedOn.put("personId", 8);
-        benchmarkWorkedOn.put("category", 1);
+        benchmarkWorkedOn.put("movieId", 10);
+        benchmarkWorkedOn.put("personId", 10);
+        benchmarkWorkedOn.put("category", 20);
         BENCHMARK_WORKED_ON = Collections.unmodifiableMap(benchmarkWorkedOn);
 
         Map<String, Integer> benchmarkPeople = new LinkedHashMap<>();
-        benchmarkPeople.put("personId", 8);
+        benchmarkPeople.put("personId", 10);
         benchmarkPeople.put("name", 105);
         BENCHMARK_PEOPLE = Collections.unmodifiableMap(benchmarkPeople);
     }

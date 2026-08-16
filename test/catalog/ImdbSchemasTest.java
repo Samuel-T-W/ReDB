@@ -17,18 +17,17 @@ class ImdbSchemasTest {
     }
 
     @Test
-    void compactSchemasFitSnapshotHeapsBelowTenGibibytes() {
-        assertEquals(Map.of("movieId", 8, "title", 482), ImdbSchemas.BENCHMARK_MOVIES);
+    void benchmarkSchemasMatchOriginalRealImdbCsvValues() {
+        assertEquals(Map.of("movieId", 10, "title", 482), ImdbSchemas.BENCHMARK_MOVIES);
         assertEquals(
-                Map.of("movieId", 8, "personId", 8, "category", 1),
+                Map.of("movieId", 10, "personId", 10, "category", 20),
                 ImdbSchemas.BENCHMARK_WORKED_ON);
-        assertEquals(Map.of("personId", 8, "name", 105), ImdbSchemas.BENCHMARK_PEOPLE);
-        assertEquals("6", ImdbSchemas.BENCHMARK_DIRECTOR);
+        assertEquals(Map.of("personId", 10, "name", 105), ImdbSchemas.BENCHMARK_PEOPLE);
 
         long pages = pageCount(12_717_779, ImdbSchemas.BENCHMARK_MOVIES)
                 + pageCount(101_214_175, ImdbSchemas.BENCHMARK_WORKED_ON)
                 + pageCount(15_576_470, ImdbSchemas.BENCHMARK_PEOPLE);
-        assertEquals(10_011_152_384L, pages * RawPage.MAX_PAGE_LEN);
+        assertEquals(12_398_841_856L, pages * RawPage.MAX_PAGE_LEN);
     }
 
     private static int recordSize(Map<String, Integer> schema) {
