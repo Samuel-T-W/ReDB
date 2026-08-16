@@ -15,7 +15,14 @@ class RunBenchmarkDatasetTest(unittest.TestCase):
         with patch.object(sys, "argv", ["run_benchmark.py"]):
             self.assertEqual("small", run_benchmark.parse_args().dataset)
         with patch.object(sys, "argv", ["run_benchmark.py", "--dataset", "full"]):
-            self.assertEqual("full", run_benchmark.parse_args().dataset)
+            args = run_benchmark.parse_args()
+        self.assertEqual("full", args.dataset)
+        command = run_benchmark.build_java_command(
+            Path("/repo"),
+            {"name": "range", "start_range": "a", "end_range": "b"},
+            args,
+        )
+        self.assertEqual(["--dataset", "full"], command[-2:])
 
     def test_full_worker_links_canonical_names_to_full_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -33,10 +40,12 @@ class RunBenchmarkDatasetTest(unittest.TestCase):
 
     def test_scan_benchmark_does_not_require_index(self):
         self.assertNotIn("title.idx", run_benchmark.database_files("small", False))
-        self.assertEqual(
-            "title-full.idx",
-            run_benchmark.database_files("full", True)["title.idx"],
-        )
+        self.assertNotIn("title.idx", run_benchmark.database_files("full", False))
+        with patch.object(
+            sys, "argv", ["run_benchmark.py", "--dataset", "full", "--index"]
+        ):
+            with self.assertRaises(SystemExit):
+                run_benchmark.parse_args()
 
 
 if __name__ == "__main__":

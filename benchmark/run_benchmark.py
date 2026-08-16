@@ -25,7 +25,7 @@ from reporting import (
 )
 
 
-TITLE_BYTES = 512
+TITLE_BYTES = {"small": 30, "full": 482}
 DATABASE_SETS = {
     "small": {
         "movies.db": "movies.db",
@@ -37,7 +37,6 @@ DATABASE_SETS = {
         "movies.db": "movies-full.db",
         "workedon.db": "workedon-full.db",
         "people.db": "people-full.db",
-        "title.idx": "title-full.idx",
     },
 }
 
@@ -149,10 +148,12 @@ def parse_args() -> BenchmarkArgs:
         parser.error("--buffer-size must be at least 3")
     if args.memory_sample_ms < 1:
         parser.error("--memory-sample-ms must be positive")
+    if args.dataset == "full" and args.index:
+        parser.error("--index is unavailable for the full benchmark dataset")
     return cast(BenchmarkArgs, args)
 
 
-def load_workloads(path: Path) -> list[Workload]:
+def load_workloads(path: Path, title_bytes: int = TITLE_BYTES["small"]) -> list[Workload]:
     """Load and validate named title-range query scenarios from a CSV file."""
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -166,10 +167,10 @@ def load_workloads(path: Path) -> list[Workload]:
         raise ValueError(f"{path} contains no workloads")
     for workload in workloads:
         if any(
-            len(workload[field].encode("utf-8")) > TITLE_BYTES
+            len(workload[field].encode("utf-8")) > title_bytes
             for field in ("start_range", "end_range")
         ):
-            raise ValueError(f"Range exceeds {TITLE_BYTES} bytes in workload {workload['name']}")
+            raise ValueError(f"Range exceeds {title_bytes} bytes in workload {workload['name']}")
     return workloads
 
 
@@ -215,7 +216,7 @@ def database_files(dataset: str, use_index: bool) -> dict[str, str]:
     """Map canonical worker filenames to one preprocessed dataset's files."""
     files = dict(DATABASE_SETS[dataset])
     if not use_index:
-        files.pop("title.idx")
+        files.pop("title.idx", None)
     return files
 
 
@@ -225,6 +226,22 @@ def create_worker_dir(root: Path, parent: Path, dataset: str, use_index: bool) -
     for worker_name, source_name in database_files(dataset, use_index).items():
         os.symlink(root / source_name, worker_dir / worker_name)
     return worker_dir
+
+
+def build_java_command(root: Path, workload: Workload, args: BenchmarkArgs) -> list[str]:
+    """Build one worker command with the matching physical dataset profile."""
+    command = ["java"]
+    if args.java_xmx:
+        command.append(f"-Xmx{args.java_xmx}")
+    command.extend([
+        "-cp", str(root / "target" / "classes"), "Main", "run_query",
+        workload["start_range"], workload["end_range"], str(args.buffer_size), "--metrics",
+    ])
+    if args.index:
+        command.append("--index")
+    if args.dataset == "full":
+        command.extend(["--dataset", "full"])
+    return command
 
 
 def run_query(
@@ -239,23 +256,7 @@ def run_query(
 ) -> ResultRow:
     """Run one workload in its own JVM and return a raw benchmark result row."""
     worker_dir = create_worker_dir(root, work_parent, args.dataset, args.index)
-    java_command = ["java"]
-    if args.java_xmx:
-        java_command.append(f"-Xmx{args.java_xmx}")
-    java_command.extend(
-        [
-            "-cp",
-            str(root / "target" / "classes"),
-            "Main",
-            "run_query",
-            workload["start_range"],
-            workload["end_range"],
-            str(args.buffer_size),
-            "--metrics",
-        ]
-    )
-    if args.index:
-        java_command.append("--index")
+    java_command = build_java_command(root, workload, args)
 
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     wall_start = time.perf_counter_ns()
@@ -368,7 +369,7 @@ def main() -> int:
         return 2
 
     try:
-        workloads = load_workloads(args.workload)
+        workloads = load_workloads(args.workload, TITLE_BYTES[args.dataset])
     except (OSError, ValueError) as exc:
         print(f"Invalid workload: {exc}", file=sys.stderr)
         return 2
