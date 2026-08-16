@@ -21,6 +21,13 @@ import util.RecordUtils;
 
 public final class PreProcessorUtils {
 
+    /**
+     * How many individual skipped rows are named on stderr per file. A CSV loaded
+     * against the wrong schema can overflow on every row, and millions of warnings
+     * would bury the rest of the run; the tail is covered by the final count.
+     */
+    private static final int MAX_SKIP_WARNINGS = 20;
+
     private PreProcessorUtils() {
     }
 
@@ -36,8 +43,26 @@ public final class PreProcessorUtils {
             Page current = bm.createPage(fileId, null);
             GenericPage gp = new GenericPage(current, schema);
             String line;
+            long lineNumber = 1; // the header line was just consumed
+            long skipped = 0;
             while ((line = br.readLine()) != null) {
+                lineNumber++;
                 String[] cols = parseCsvLine(line);
+
+                // A value too wide for its field is a data problem, not a load
+                // failure: skip the row, keep loading, and account for it below.
+                String overflow = describeOverflow(schema, cols);
+                if (overflow != null) {
+                    if (skipped < MAX_SKIP_WARNINGS) {
+                        System.err.println(
+                                "WARN " + csvPath + ":" + lineNumber + " skipped, " + overflow);
+                    } else if (skipped == MAX_SKIP_WARNINGS) {
+                        System.err.println(
+                                "WARN " + csvPath + ": further per-row skip warnings suppressed");
+                    }
+                    skipped++;
+                    continue;
+                }
                 GenericRecord rec = buildRecord(schema, cols);
 
                 if (gp.insertRecord(rec) == -1) {
@@ -55,6 +80,11 @@ public final class PreProcessorUtils {
 
             bm.unpinPage(fileId, current.getPid());
             bm.force();
+            if (skipped > 0) {
+                System.err.println("WARN " + csvPath + ": skipped " + skipped
+                        + " row(s) exceeding schema field widths; " + (lineNumber - 1 - skipped)
+                        + " row(s) loaded");
+            }
             return numPages;
         }
     }
@@ -95,6 +125,24 @@ public final class PreProcessorUtils {
 
     public static byte[] toFixedBytes(String s, int length) {
         return RecordUtils.toFixedBytes(s, length);
+    }
+
+    /**
+     * Describes the first field whose value will not fit its fixed-length slot, or
+     * null when the row is loadable.
+     */
+    private static String describeOverflow(Map<String, Integer> schema, String[] cols) {
+        int i = 0;
+        for (Map.Entry<String, Integer> field : schema.entrySet()) {
+            String val = i < cols.length ? cols[i] : "";
+            int byteCount = val.getBytes(StandardCharsets.UTF_8).length;
+            if (byteCount > field.getValue()) {
+                return field.getKey() + " requires " + byteCount
+                        + " UTF-8 bytes but field allows " + field.getValue();
+            }
+            i++;
+        }
+        return null;
     }
 
     private static GenericRecord buildRecord(Map<String, Integer> schema, String[] cols) {

@@ -2,10 +2,15 @@ package util.preprocessor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import buffer.BufferManager;
 import catalog.TableEntry;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
@@ -81,6 +86,50 @@ class PreProcessorUtilsTest {
                 IOException.class,
                 () -> PreProcessorUtils.loadTable(
                         bufferManager, csv.toString(), database, MOVIES_SCHEMA));
+    }
+
+    @Test
+    void overlongRowIsSkippedAndReportedWithoutFailingTheLoad() throws Exception {
+        Map<String, Integer> narrow = new LinkedHashMap<>();
+        narrow.put("movieId", 9);
+        narrow.put("title", 10);
+
+        Path csv = tempDir.resolve("narrow-title.csv");
+        Files.writeString(
+                csv,
+                "movieId,title\n"
+                        + "tt0000001,Carmencita\n"
+                        + "tt0000002,A Title Too Long To Fit\n"
+                        + "tt0000003,Le Clown\n");
+        String database = tempDir.resolve("narrow.db").toString();
+        BufferManager bufferManager = new BufferManager(2);
+        bufferManager.register(new TableEntry(database, narrow));
+
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(captured, true, StandardCharsets.UTF_8));
+            PreProcessorUtils.loadTable(bufferManager, csv.toString(), database, narrow);
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        Page page = bufferManager.getPage(database, 0);
+        GenericPage loaded = new GenericPage(page, narrow);
+        assertEquals(2, recordCount(page));
+        assertEquals("tt0000001", value((GenericRecord) loaded.getRecord(0), "movieId"));
+        assertEquals("tt0000003", value((GenericRecord) loaded.getRecord(1), "movieId"));
+        bufferManager.unpinPage(database, 0);
+
+        String warnings = captured.toString(StandardCharsets.UTF_8);
+        assertTrue(warnings.contains("narrow-title.csv:3 skipped"), warnings);
+        assertTrue(warnings.contains("title requires 23 UTF-8 bytes but field allows 10"), warnings);
+        assertTrue(warnings.contains("skipped 1 row(s)"), warnings);
+        assertTrue(warnings.contains("2 row(s) loaded"), warnings);
+    }
+
+    private static int recordCount(Page page) {
+        return ByteBuffer.wrap(page.getByteArray()).getInt(0);
     }
 
     private GenericRecord loadFirstRecord(Path csv) throws Exception {
