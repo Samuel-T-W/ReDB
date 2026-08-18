@@ -139,9 +139,9 @@ public class Project implements Operator {
                 }
             }
             bm.markDirty(tempFileId, currentRaw.getPid());
+            bm.force();
             bm.unpinPage(tempFileId, currentRaw.getPid());
             currentRaw = null;
-            bm.force();
 
             child.close();
             childOpened = false;

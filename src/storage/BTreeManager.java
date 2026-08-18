@@ -29,6 +29,23 @@ public class BTreeManager implements BTree {
 	// -----------------------------------------------------------------------
 
 	/**
+	 * Largest degree that both node types can hold for the given key size. Callers
+	 * derive their degree from this rather than hardcoding one, because a degree
+	 * that fits a narrow key overflows the page once the key widens.
+	 *
+	 * @throws IllegalArgumentException
+	 *             If the key is so wide that no valid degree (≥ 2) fits a page.
+	 */
+	public static int maxDegree(int keySize) {
+		int degree = Math.min(InternalPage.maxDegree(keySize), LeafPage.maxDegree(keySize));
+		if (degree < 2) {
+			throw new IllegalArgumentException(
+					"Key size " + keySize + " is too wide for a B+ tree page (max degree " + degree + ")");
+		}
+		return degree;
+	}
+
+	/**
 	 * Creates a brand-new B+ Tree, writing an internal root and one empty leaf
 	 * child into the buffer pool.
 	 *

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download IMDb's public datasets and build the CSVs consumed by ReDB."""
+"""Download IMDb's public datasets and build ReDB's benchmark CSVs."""
 
 import argparse
 import csv
@@ -14,8 +14,15 @@ from pathlib import Path
 BASE_URL = "https://datasets.imdbws.com"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_DIR = REPO_ROOT / "data" / "imdb-source"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "imdb-full"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "imdb-benchmark"
 NULL = r"\N"
+OUTPUT_LIMITS = {
+    "movieId": 10,
+    "personId": 10,
+    "title": 482,
+    "category": 20,
+    "name": 105,
+}
 
 
 @dataclass(frozen=True)
@@ -29,23 +36,17 @@ DATASETS = (
     Dataset(
         "title.basics.tsv.gz", "title.csv", (
             ("tconst", "movieId"), ("primaryTitle", "title"),
-            ("startYear", "startYear"), ("endYear", "endYear"),
-            ("isAdult", "isAdult"), ("originalTitle", "originalTitle"),
-            ("titleType", "titleType"), ("runtimeMinutes", "runtimeMinutes"),
-            ("genres", "genres"),
         )
     ),
     Dataset(
         "title.principals.tsv.gz", "workedon.csv", (
             ("tconst", "movieId"), ("nconst", "personId"),
-            ("category", "category"), ("ordering", "ordering"), ("job", "job"),
+            ("category", "category"),
         )
     ),
     Dataset(
         "name.basics.tsv.gz", "name.csv", (
             ("nconst", "personId"), ("primaryName", "name"),
-            ("birthYear", "birthYear"), ("deathYear", "deathYear"),
-            ("primaryProfession", "primaryProfession"),
         )
     ),
 )
@@ -67,6 +68,16 @@ def download(dataset: Dataset, source_dir: Path, refresh: bool) -> Path:
     return destination
 
 
+def output_value(column: str, value: str) -> str:
+    if value == NULL:
+        value = ""
+    byte_count = len(value.encode("utf-8"))
+    if byte_count > OUTPUT_LIMITS[column]:
+        raise ValueError(
+            f"{column} exceeds {OUTPUT_LIMITS[column]} UTF-8 bytes: {byte_count}")
+    return value
+
+
 def convert(dataset: Dataset, source: Path, output: Path) -> int:
     temporary = output.with_suffix(output.suffix + ".tmp")
     required = {source_name for source_name, _ in dataset.columns}
@@ -85,7 +96,10 @@ def convert(dataset: Dataset, source: Path, output: Path) -> int:
                     values = [source_row[name] for name, _ in dataset.columns]
                     if any("\n" in value or "\r" in value for value in values):
                         raise ValueError(f"{source.name} contains a multiline field")
-                    writer.writerow(["" if value == NULL else value for value in values])
+                    writer.writerow([
+                        output_value(output_name, value)
+                        for (_, output_name), value in zip(dataset.columns, values)
+                    ])
                     rows += 1
         os.replace(temporary, output)
     finally:

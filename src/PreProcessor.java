@@ -4,6 +4,7 @@ import catalog.TableEntry;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import storage.BTreeManager;
 import util.preprocessor.PreProcessorUtils;
 
 public class PreProcessor {
@@ -21,11 +22,14 @@ public class PreProcessor {
     static final Map<String, Integer> WORKEDON_SCHEMA = new LinkedHashMap<>();
     static final Map<String, Integer> PEOPLE_SCHEMA = new LinkedHashMap<>();
 
+    // Widths are the widest value observed in the full IMDb dump, in UTF-8 bytes:
+    // tconst/nconst 10, primaryTitle 482, category 19, primaryName 105. Rows that
+    // exceed a width are skipped and reported by the loader, not truncated.
     static {
-        MOVIES_SCHEMA.put("movieId", 9);
-        MOVIES_SCHEMA.put("title", 30);
+        MOVIES_SCHEMA.put("movieId", 10);
+        MOVIES_SCHEMA.put("title", 482);
 
-        WORKEDON_SCHEMA.put("movieId", 9);
+        WORKEDON_SCHEMA.put("movieId", 10);
         WORKEDON_SCHEMA.put("personId", 10);
         WORKEDON_SCHEMA.put("category", 20);
 
@@ -33,7 +37,7 @@ public class PreProcessor {
         PEOPLE_SCHEMA.put("name", 105);
     }
 
-    private static final int BTREE_DEGREE = 50;
+    private static final int BTREE_DEGREE = BTreeManager.maxDegree(MOVIES_SCHEMA.get("title"));
     private static final int BUFFER_SIZE = 100;
 
     public static void run() throws IOException {
