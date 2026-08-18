@@ -1,0 +1,14 @@
+{
+  "name": "ReDB",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web-dev-server",
+      "command": "cd web && npm run dev",
+      "description": "Vite dev server for the ReDB web showcase (http://localhost:5180)."
+    }
+  ],
+  "ports": [
+    { "name": "web showcase", "port": 5180 }
+  ]
+}
