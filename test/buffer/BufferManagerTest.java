@@ -142,6 +142,52 @@ public class BufferManagerTest {
 	}
 
 	@Test
+	void evictionReclaimsTheOnlyUnpinnedFrameAndLoadsTheNewPage() throws Exception {
+		// pool of 3, holding pages 0, 1, 2; only page 1 is unpinned
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+		}
+		bm.unpinPage(fileOneName, 1);
+
+		Page page3 = bm.getPage(fileOneName, 3);
+
+		// page 1 is the frame the sweep reclaimed; 0 and 2 stayed put
+		assertArrayEquals(new int[]{0, 2, 3}, bm.listPageID());
+		// and page 3 arrived whole: on disk every byte of it is 0xDD
+		byte[] expected = new byte[RawPage.MAX_PAGE_LEN];
+		Arrays.fill(expected, (byte) 0xDD);
+		assertArrayEquals(expected, page3.getByteArray());
+	}
+
+	@Test
+	void aPinnedFrameIsNeverChosenAsAVictim() throws Exception {
+		bm = new BufferManager(2);
+		bm.getPage(fileOneName, 0); // pinned for the whole test
+
+		// churn the one remaining frame; page 0 must survive every sweep
+		for (int pageId = 1; pageId <= 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+			assertEquals(1, bm.getPinCount(fileOneName, 0), "pinned page 0 was evicted");
+		}
+		assertArrayEquals(new int[]{0, 3}, bm.listPageID());
+	}
+
+	@Test
+	void anAllPinnedPoolThrowsAndLeavesEveryFrameInPlace() throws Exception {
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+		}
+
+		RuntimeException ex = assertThrowsExactly(RuntimeException.class, () -> bm.getPage(fileOneName, 3));
+
+		assertEquals("All frames are pinned, cannot evict", ex.getMessage());
+		// the failed sweep must leave the pool exactly as it found it
+		assertArrayEquals(new int[]{0, 1, 2}, bm.listPageID());
+		assertEquals(3, bm.getTotalPinCount());
+	}
+
+	@Test
 	void testGetPageThatDoesNotExist() throws Exception {
 		// page 10 doesn't exist in the file (only pages 0-3)
 		assertThrows(java.io.EOFException.class, () -> {

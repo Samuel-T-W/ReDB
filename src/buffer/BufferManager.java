@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -38,6 +39,11 @@ public class BufferManager {
 	// also what the clock replacer will sweep over.
 	final FrameState[] frameStates;
 	private Queue<Integer> freeFrameIndices;
+	// Second-chance victim selector over frameStates. Replaces the old scan of
+	// the page table's LRU order: it sweeps the frames themselves and hands back
+	// a victim already claimed in EVICTING, so no other thread can pin or
+	// re-evict it while this thread drops globalLock to flush.
+	private final ClockReplacer clockReplacer;
 
 	// Global lock guarding all buffer pool state: pageTable (including its LRU
 	// order), bufferPool frames (pin counts, dirty flags, contents),
@@ -69,6 +75,7 @@ public class BufferManager {
 		this.catalog = new ConcurrentHashMap<>();
 
 		initializeBufferManager();
+		this.clockReplacer = new ClockReplacer(frameStates);
 	}
 
 	private void initializeBufferManager() {
@@ -387,9 +394,9 @@ public class BufferManager {
 	/** HELPER FUNCTIONS SECTIONS */
 
 	/**
-	 * Evicts the LRU unpinned page and returns its frame index for immediate
-	 * reuse by the caller; throws if all frames are pinned. Must be called with
-	 * globalLock held.
+	 * Evicts an unpinned page chosen by the clock replacer and returns its frame
+	 * index for immediate reuse by the caller; throws if all frames are pinned.
+	 * Must be called with globalLock held.
 	 *
 	 * <p>If the victim is dirty, the victim is removed from the page table and
 	 * an in-flight flush marker is installed BEFORE the lock is released for
@@ -400,19 +407,13 @@ public class BufferManager {
 	 */
 	private int evict() throws RuntimeException, IOException {
 
-		// loop and grab lru page thats unpinned
-		Frame evictFrame = null;
-		for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
-			Frame frame = bufferPool[entry.getValue()];
-			if (frame.state.pinCount() == 0) {
-				evictFrame = frame;
-				break;
-			}
-		}
-
-		if (evictFrame == null)
+		// the sweep returns a frame already claimed in EVICTING and owned by
+		// this thread; an empty result means nothing in the pool was evictable
+		OptionalInt victim = clockReplacer.findVictim();
+		if (victim.isEmpty())
 			throw new RuntimeException("All frames are pinned, cannot evict");
 
+		Frame evictFrame = bufferPool[victim.getAsInt()];
 		PageKey victimKey = evictFrame.pageKey;
 		pageTable.remove(victimKey);
 
@@ -434,6 +435,13 @@ public class BufferManager {
 				// put the victim back so its latest bytes stay reachable in
 				// memory; waiters retry and find it in the page table
 				pageTable.put(victimKey, evictFrame.frameIndex);
+				// and release the eviction claim: a frame left in EVICTING is
+				// unpinnable and invisible to every future sweep, so the pool
+				// would silently lose it
+				if (!evictFrame.state.abortEvict()) {
+					failure.addSuppressed(new IllegalStateException(
+							"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
+				}
 				flush.completeExceptionally(failure);
 				throw failure;
 			}

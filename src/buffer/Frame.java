@@ -40,20 +40,34 @@ public class Frame {
 		}
 	}
 
+	/**
+	 * Empties the frame. The state transition runs first so the operation is
+	 * all-or-nothing: a refused transition throws with the frame's fields still
+	 * intact, never leaving a frame that reports hasPage() while holding no page.
+	 */
 	public void clear() {
+		resetState();
 		this.page = null;
 		this.isDirty = false;
 		this.pageKey = null;
-		resetState();
 	}
 
 	/** Drives the state word back to FREE with pin count 0 and a bumped version. */
 	private void resetState() {
-		if (state.state() == FrameState.State.FREE) {
+		FrameState.State current = state.state();
+		if (current == FrameState.State.FREE) {
 			return;
 		}
-		state.clearReferenced();
-		if (!state.tryClaimForEviction() || !state.finishEvict()) {
+		// A victim handed over by the clock replacer arrives already claimed in
+		// EVICTING and exclusively owned by this caller, so it only needs
+		// finishing. An unclaimed VALID frame must be claimed here first.
+		if (current == FrameState.State.VALID) {
+			state.clearReferenced();
+			if (!state.tryClaimForEviction()) {
+				throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
+			}
+		}
+		if (!state.finishEvict()) {
 			throw new IllegalStateException("cannot clear frame " + frameIndex + ": " + describeState());
 		}
 	}
