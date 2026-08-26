@@ -543,6 +543,66 @@ public class BufferManagerTest {
 	}
 
 	@Test
+	public void testFreshPoolHandsOutEveryFrameWithNoFreeList() throws Exception {
+		// Goal: the FREE state words alone are enough to allocate a fresh pool.
+		// Worked example: a pool of 3 reports 3 free frames, three createPage
+		// calls return page ids 0, 1 and 2, and no frame is left free.
+		String scratchId = "fresh-pool";
+		assertEquals(3, bm.getFreeFrameCount());
+		assertEquals(0, bm.createPage(scratchId, null).getPid());
+		assertEquals(1, bm.createPage(scratchId, null).getPid());
+		assertEquals(2, bm.createPage(scratchId, null).getPid());
+		int[] buffered = bm.listPageID();
+		Arrays.sort(buffered);
+		assertArrayEquals(new int[] {0, 1, 2}, buffered);
+		assertEquals(0, bm.getFreeFrameCount(), "a full pool has no free frame left");
+	}
+
+	@Test
+	public void testFramesFreedByDiscardAreFoundByLaterAllocations() throws Exception {
+		// Goal: discardFile hands its frames back through the state word only,
+		// so every one of them must be reachable again, not just the first.
+		String discarded = "discard-reuse";
+		for (int i = 0; i < 3; i++) {
+			bm.unpinPage(discarded, bm.createPage(discarded, null).getPid());
+		}
+		assertEquals(0, bm.getFreeFrameCount());
+
+		bm.discardFile(discarded);
+		assertEquals(3, bm.getFreeFrameCount());
+
+		String reuse = "discard-reuse-next";
+		assertEquals(0, bm.createPage(reuse, null).getPid());
+		assertEquals(1, bm.createPage(reuse, null).getPid());
+		assertEquals(2, bm.createPage(reuse, null).getPid());
+		assertEquals(0, bm.getFreeFrameCount());
+	}
+
+	@Test
+	public void testFailedEvictionDoesNotLoseAFrame() throws Exception {
+		// Goal: a failure in the allocate-or-evict path leaves every frame
+		// findable. The write-back of a dirty victim is aimed into a directory
+		// that does not exist yet, so the eviction fails; creating the directory
+		// then lets the very same allocation succeed on an intact pool.
+		File missingDir = new File(System.getProperty("java.io.tmpdir"), "redb-lost-frame-" + System.nanoTime());
+		File scratchFile = new File(missingDir, "scratch.dat");
+		scratchFile.deleteOnExit();
+		missingDir.deleteOnExit();
+		String scratchId = scratchFile.getAbsolutePath();
+		for (int i = 0; i < 3; i++) {
+			Page page = bm.createPage(scratchId, null);
+			bm.markDirty(scratchId, page.getPid());
+			bm.unpinPage(scratchId, page.getPid());
+		}
+
+		assertThrows(IOException.class, () -> bm.createPage(scratchId, null));
+		assertEquals(3, bm.getFreeFrameCount() + bm.listPageID().length, "the failed eviction lost a frame");
+
+		assertTrue(missingDir.mkdirs());
+		assertDoesNotThrow(() -> bm.createPage(scratchId, null));
+	}
+
+	@Test
 	public void testDiscardFileLeavesOtherFilesAlone() throws Exception {
 		// Goal: discarding one file must not touch another file's pages or pins.
 		String scratchId = "discard-scratch-other";

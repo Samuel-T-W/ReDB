@@ -7,11 +7,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
-import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -37,7 +35,6 @@ public class BufferManager {
 	// lazily built Frame adopts the word already sitting at its index, which is
 	// also what the clock replacer will sweep over.
 	final FrameState[] frameStates;
-	private Queue<Integer> freeFrameIndices;
 	// Second-chance victim selector over frameStates. Replaces the old scan of
 	// the page table's LRU order: it sweeps the frames themselves and hands back
 	// a victim already claimed in EVICTING, so no other thread can pin or
@@ -45,8 +42,8 @@ public class BufferManager {
 	private final ClockReplacer clockReplacer;
 
 	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
-	// (pin counts, dirty flags, contents), freeFrameIndices, and the in-flight
-	// maps below. Page loads and dirty eviction flushes happen OUTSIDE the lock
+	// (pin counts, dirty flags, contents) and the in-flight maps below. Page
+	// loads and dirty eviction flushes happen OUTSIDE the lock
 	// so one thread's disk I/O never blocks another thread's cache hits;
 	// force() keeps the coarse lock (rare).
 	private final ReentrantLock globalLock = new ReentrantLock();
@@ -69,7 +66,6 @@ public class BufferManager {
 		this.pageTable = new HashMap<>();
 		this.bufferPool = new Frame[bufferSize];
 		this.frameStates = new FrameState[bufferSize];
-		this.freeFrameIndices = new LinkedList<>();
 
 		this.catalog = new ConcurrentHashMap<>();
 
@@ -78,9 +74,8 @@ public class BufferManager {
 	}
 
 	private void initializeBufferManager() {
-		// add all free indices
+		// FREE is the pool's only record of a frame being available
 		for (int i = 0; i < bufferSize; i++) {
-			freeFrameIndices.add(i);
 			frameStates[i] = new FrameState();
 		}
 	}
@@ -358,8 +353,8 @@ public class BufferManager {
 								"Cannot discard file with pinned page: " + entry.getKey());
 					}
 					iter.remove();
+					// clear() drives the word to FREE: all a later claim needs
 					frame.clear();
-					freeFrameIndices.add(frame.frameIndex);
 				}
 				for (Map.Entry<PageKey, CompletableFuture<Page>> entry : inFlightLoads.entrySet()) {
 					if (entry.getKey().fileId().equals(fileId))
@@ -399,9 +394,9 @@ public class BufferManager {
 	 * <p>If the victim is dirty, the victim is removed from the page table and
 	 * an in-flight flush marker is installed BEFORE the lock is released for
 	 * the disk write, so a concurrent getPage for the victim's key waits for
-	 * the flush instead of reading stale bytes from disk. The reclaimed frame
-	 * is handed straight to the caller (never through freeFrameIndices), so no
-	 * other thread can claim it while the lock is dropped.
+	 * the flush instead of reading stale bytes from disk. The reclaimed frame is
+	 * returned FREE, so a caller that fails to claim or fill it still leaves it
+	 * findable by the next sweep.
 	 */
 	private int evict() throws RuntimeException, IOException {
 
@@ -470,20 +465,27 @@ public class BufferManager {
 	 */
 	private Page addToFrame(PageKey pageKey, Page page, boolean is_pinned) throws IOException, IllegalStateException {
 
-		// take a free frame, evicting to reclaim one if none are free
-		Integer freeFrameIndex = freeFrameIndices.poll();
-		if (freeFrameIndex == null) {
-			freeFrameIndex = evict();
+		// take a frame claimed out of FREE, evicting to reclaim one if none are free
+		int frameIndex = claimFrame();
+		try {
+			return fillFrame(frameIndex, pageKey, page, is_pinned);
+		} catch (RuntimeException e) {
+			releaseClaim(frameIndex, e);
+			throw e;
 		}
+	}
+
+	/** Points a frame this caller has already claimed at its page and publishes it. */
+	private Page fillFrame(int frameIndex, PageKey pageKey, Page page, boolean is_pinned) {
 
 		// load if frame object instantiated otherwise create a new one
-		if (bufferPool[freeFrameIndex] == null) {
-			bufferPool[freeFrameIndex] = new Frame(freeFrameIndex, frameStates[freeFrameIndex]);
+		if (bufferPool[frameIndex] == null) {
+			bufferPool[frameIndex] = new Frame(frameIndex, frameStates[frameIndex]);
 		}
-		Frame frame = bufferPool[freeFrameIndex];
+		Frame frame = bufferPool[frameIndex];
 
 		// assert page is empty
-		if (frame.hasPage()) {
+		if (frame.page != null) {
 			throw new IllegalStateException("Expected Free Frame object");
 		}
 
@@ -496,9 +498,55 @@ public class BufferManager {
 		}
 
 		// add page to page table
-		pageTable.put(pageKey, freeFrameIndex);
+		pageTable.put(pageKey, frameIndex);
 
 		return page;
+	}
+
+	/**
+	 * Returns a frame claimed in LOADING and owned by this caller: a FREE one if
+	 * the pool has any, a reclaimed victim otherwise. Both routes leave through
+	 * the same compare-and-swap out of FREE, so nothing has to be kept in step
+	 * with the state word and two callers can never hold the same index. A
+	 * victim reclaimed by evict() is briefly FREE like any other frame, so
+	 * losing the race for it just means sweeping again.
+	 */
+	private int claimFrame() throws IOException {
+		for (;;) {
+			OptionalInt claimed = clockReplacer.claimFree();
+			if (claimed.isPresent()) {
+				return claimed.getAsInt();
+			}
+			int reclaimed = evict();
+			if (frameStates[reclaimed].tryBeginLoad()) {
+				return reclaimed;
+			}
+		}
+	}
+
+	/**
+	 * Hands a claimed frame back after a failed fill, making allocation
+	 * all-or-nothing: the caller either gets a filled frame or leaves the frame
+	 * FREE and sweepable, never stranded where no sweep looks. FrameState has no
+	 * direct LOADING to FREE edge, so an unfilled claim is finished and cleared
+	 * straight back out; a frame that will not unwind is reported as a
+	 * suppressed exception rather than replacing the original failure.
+	 */
+	private void releaseClaim(int frameIndex, RuntimeException cause) {
+		Frame frame = bufferPool[frameIndex];
+		if (frame == null) {
+			return;
+		}
+		frame.page = null;
+		frame.pageKey = null;
+		try {
+			if (frame.state.state() == FrameState.State.LOADING) {
+				frame.markValid();
+			}
+			frame.clear();
+		} catch (IllegalStateException e) {
+			cause.addSuppressed(e);
+		}
 	}
 
 	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); }
@@ -557,13 +605,19 @@ public class BufferManager {
 		}
 	}
 
-	// package-private, for concurrency tests: frames currently in the free list.
+	// package-private, for concurrency tests: frames whose state word says FREE.
 	// In a quiescent pool, free frames + pageTable entries == bufferSize (a frame
 	// mid-flush is briefly in neither).
 	int getFreeFrameCount() {
 		globalLock.lock();
 		try {
-			return freeFrameIndices.size();
+			int free = 0;
+			for (FrameState state : frameStates) {
+				if (state.state() == FrameState.State.FREE) {
+					free++;
+				}
+			}
+			return free;
 		} finally {
 			globalLock.unlock();
 		}
