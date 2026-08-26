@@ -38,8 +38,8 @@ public class BufferManager {
 	// re-evict it while this thread drops globalLock to flush.
 	private final ClockReplacer clockReplacer;
 
-	// Global lock guarding miss/evict/force/discard. Cache hits pin through
-	// the frame state word and do not take this lock.
+	// force, discardFile, and parking LOADING/FLUSHING waiters. Hits, misses,
+	// pins, and eviction claims do not take this lock.
 	private final ReentrantLock globalLock = new ReentrantLock();
 
 	// A LOADING or FLUSHING frame stays in the page table, so a reader finds it
@@ -223,14 +223,8 @@ public class BufferManager {
 			page.fillPageData(data);
 		}
 
-		// freshly allocated page id: no other thread can reference this key yet,
-		// so no in-flight load marker is needed around addToFrame
-		globalLock.lock();
-		try {
-			addToFrame(pageKey, page, true);
-		} finally {
-			globalLock.unlock();
-		}
+		// freshly allocated page id: no other thread can reference this key yet
+		addToFrame(pageKey, page, true);
 		return page;
 	}
 
@@ -245,18 +239,13 @@ public class BufferManager {
 	 */
 	public void markDirty(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		globalLock.lock();
-		try {
-			Integer frameIndex = pageTable.get(pageKey);
-			if (frameIndex == null) {
-				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
-			}
-			Frame frame = bufferPool[frameIndex];
-			if (frame.hasPage()) {
-				frame.isDirty = true;
-			}
-		} finally {
-			globalLock.unlock();
+		Integer frameIndex = pageTable.get(pageKey);
+		if (frameIndex == null) {
+			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
+		}
+		Frame frame = bufferPool[frameIndex];
+		if (frame != null && pageKey.equals(frame.pageKey) && frame.hasPage()) {
+			frame.isDirty = true;
 		}
 	}
 
@@ -270,19 +259,14 @@ public class BufferManager {
 	 */
 	public void unpinPage(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		globalLock.lock();
-		try {
-			Integer frameIndex = pageTable.get(pageKey);
-			if (frameIndex == null) {
-				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
-			}
-			Frame frame = bufferPool[frameIndex];
-			if (frame.state.pinCount() > 0)
-				frame.state.unpin();
-			flushSettled.signalAll();
-		} finally {
-			globalLock.unlock();
+		Integer frameIndex = pageTable.get(pageKey);
+		if (frameIndex == null) {
+			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 		}
+		Frame frame = bufferPool[frameIndex];
+		if (frame != null && pageKey.equals(frame.pageKey) && frame.state.pinCount() > 0)
+			frame.state.unpin();
+		signalSettled();
 	}
 
 	/** Forces all dirty pages currently in memory to be written back to disk. */
@@ -292,17 +276,28 @@ public class BufferManager {
 			for (;;) {
 				boolean flushing = false;
 				for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
+					PageKey key = entry.getKey();
 					Frame frame = bufferPool[entry.getValue()];
+					if (frame == null || !key.equals(frame.pageKey))
+						continue;
 					if (!frame.hasPage()) {
-						// mid-flush: the evictor owns that write; skipping
-						// avoids a double-write, then we wait and recheck
 						flushing = true;
 						continue;
 					}
 					if (!frame.isDirty)
 						continue;
-					writePageToDisk(entry.getKey().fileId(), frame.page);
-					frame.isDirty = false;
+					if (!frame.state.tryPin()) {
+						flushing = true;
+						continue;
+					}
+					try {
+						if (!key.equals(frame.pageKey) || !frame.isDirty)
+							continue;
+						writePageToDisk(key.fileId(), frame.page);
+						frame.isDirty = false;
+					} finally {
+						frame.state.unpin();
+					}
 				}
 				if (!flushing)
 					return;
@@ -341,6 +336,10 @@ public class BufferManager {
 					if (!entry.getKey().fileId().equals(fileId))
 						continue;
 					Frame frame = bufferPool[entry.getValue()];
+					if (frame == null || !entry.getKey().equals(frame.pageKey)) {
+						iter.remove();
+						continue;
+					}
 					if (frame.state.pinCount() > 0) {
 						throw new IllegalStateException(
 								"Cannot discard file with pinned page: " + entry.getKey());
@@ -377,14 +376,13 @@ public class BufferManager {
 	/**
 	 * Evicts an unpinned page chosen by the clock replacer and returns its frame
 	 * index for immediate reuse by the caller; throws if all frames are pinned.
-	 * Must be called with globalLock held.
+	 * Lock-free: the clock CAS is exclusive ownership of the victim.
 	 *
 	 * <p>If the victim is dirty, it keeps its page-table entry and moves to
-	 * FLUSHING BEFORE the lock is released for the disk write, so a concurrent
-	 * getPage for the victim's key finds the frame and parks for
-	 * the flush instead of reading stale bytes from disk. The reclaimed frame is
-	 * returned FREE, so a caller that fails to claim or fill it still leaves it
-	 * findable by the next sweep.
+	 * FLUSHING before the disk write, so a concurrent getPage for the victim's
+	 * key finds the frame and parks for the flush instead of reading stale
+	 * bytes from disk. reuseAfterEvict keeps the frame in LOADING so a
+	 * concurrent claimer cannot steal it.
 	 */
 	private int evict() throws RuntimeException, IOException {
 
@@ -426,7 +424,10 @@ public class BufferManager {
 
 	/** EVICTING/FLUSHING to LOADING, fields cleared after the state word moves. */
 	private int handOffForReuse(Frame frame, PageKey victimKey) {
-		if (victimKey != null) pageTable.remove(victimKey, frame.frameIndex);
+		int idx = frame.frameIndex;
+		if (victimKey != null)
+			pageTable.remove(victimKey, idx);
+		pageTable.values().removeIf(v -> v == idx);
 		if (!frame.state.reuseAfterEvict()) {
 			throw new IllegalStateException("cannot reuse frame " + frame.frameIndex + ": " + frame.state);
 		}
@@ -447,17 +448,15 @@ public class BufferManager {
 	}
 
 	/**
-	 * Places a page into a free frame, evicting if needed. Must be called with
-	 * globalLock held. May temporarily release the lock while a dirty victim is
-	 * flushed (see evict).
+	 * Places a page into a free frame, evicting if needed. Lock-free: claim and
+	 * install use the same CAS paths as a cache miss.
 	 */
 	private Page addToFrame(PageKey pageKey, Page page, boolean is_pinned) throws IOException, IllegalStateException {
-
-		// take a frame claimed out of FREE, evicting to reclaim one if none are free
 		int frameIndex = claimFrame();
 		try {
 			return fillFrame(frameIndex, pageKey, page, is_pinned);
 		} catch (RuntimeException e) {
+			pageTable.remove(pageKey, frameIndex);
 			releaseClaim(frameIndex, e);
 			throw e;
 		}
@@ -465,31 +464,12 @@ public class BufferManager {
 
 	/** Points a frame this caller has already claimed at its page and publishes it. */
 	private Page fillFrame(int frameIndex, PageKey pageKey, Page page, boolean is_pinned) {
-
-		// load if frame object instantiated otherwise create a new one
-		if (bufferPool[frameIndex] == null) {
-			try {
-				bufferPool[frameIndex] = new Frame(frameIndex, frameStates[frameIndex]);
-			} catch (RuntimeException | Error t) {
-				frameStates[frameIndex].abortLoad();
-				throw t;
-			}
+		if (!installLoading(frameIndex, pageKey)) {
+			throw new IllegalStateException("page already installed: " + pageKey);
 		}
 		Frame frame = bufferPool[frameIndex];
-
-		// assert page is empty
-		if (frame.page != null) {
-			throw new IllegalStateException("Expected Free Frame object");
-		}
-
-		// assign page to frame
 		frame.page = page;
-		frame.pageKey = pageKey;
 		frame.markValid();
-
-		// add page to page table
-		pageTable.put(pageKey, frameIndex);
-
 		return page;
 	}
 
@@ -520,7 +500,7 @@ public class BufferManager {
 				return evict();
 			} catch (RuntimeException e) {
 				if (!"All frames are pinned, cannot evict".equals(e.getMessage())) throw e;
-				if (!hasTransientFrame() && pinnedWaits++ >= 2) throw e;
+				if (!hasTransientFrame() && pinnedWaits++ >= 8) throw e;
 				globalLock.lock();
 				try { awaitFlushSettled(); } finally { globalLock.unlock(); }
 			}
