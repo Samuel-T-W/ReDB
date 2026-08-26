@@ -420,18 +420,13 @@ public class BufferManager {
 			}
 			try {
 				if (failure != null) {
-					// stay installed: abortFlush is FLUSHING to VALID, never FREE,
-					// so a concurrent claim cannot steal the only dirty copy
 					if (!evictFrame.state.abortFlush()) {
 						failure.addSuppressed(new IllegalStateException(
 								"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
 					}
 					throw failure;
 				}
-				int frameIndex = evictFrame.frameIndex;
-				pageTable.remove(victimKey);
-				evictFrame.clear();
-				return frameIndex;
+				return handOffForReuse(evictFrame, victimKey);
 			} finally {
 				// every flush exit, after the frame has settled. the 50ms await
 				// timeout is insurance against a missed signal, not the wait
@@ -439,12 +434,19 @@ public class BufferManager {
 			}
 		}
 
-		// evict frame content and hand the frame to the caller
-		int frameIndex = evictFrame.frameIndex;
+		return handOffForReuse(evictFrame, victimKey);
+	}
+
+	/** EVICTING/FLUSHING to LOADING, fields cleared after the state word moves. */
+	private int handOffForReuse(Frame frame, PageKey victimKey) {
 		pageTable.remove(victimKey);
-		evictFrame.clear();
-		flushSettled.signalAll();
-		return frameIndex;
+		if (!frame.state.reuseAfterEvict()) {
+			throw new IllegalStateException("cannot reuse frame " + frame.frameIndex + ": " + frame.state);
+		}
+		frame.page = null;
+		frame.isDirty = false;
+		frame.pageKey = null;
+		return frame.frameIndex;
 	}
 
 	/** Write a page to disk. Overridable so tests can stall or fail a flush. */
@@ -479,7 +481,12 @@ public class BufferManager {
 
 		// load if frame object instantiated otherwise create a new one
 		if (bufferPool[frameIndex] == null) {
-			bufferPool[frameIndex] = new Frame(frameIndex, frameStates[frameIndex]);
+			try {
+				bufferPool[frameIndex] = new Frame(frameIndex, frameStates[frameIndex]);
+			} catch (RuntimeException | Error t) {
+				frameStates[frameIndex].abortLoad();
+				throw t;
+			}
 		}
 		Frame frame = bufferPool[frameIndex];
 
@@ -516,44 +523,39 @@ public class BufferManager {
 	}
 
 	/**
-	 * Returns a frame claimed in LOADING and owned by this caller: a FREE one if
-	 * the pool has any, a reclaimed victim otherwise. Both routes leave through
-	 * the same compare-and-swap out of FREE, so nothing has to be kept in step
-	 * with the state word and two callers can never hold the same index. A
-	 * victim reclaimed by evict() is briefly FREE like any other frame, so
-	 * losing the race for it just means sweeping again.
+	 * Returns a frame claimed in LOADING: a FREE one if the pool has any, a
+	 * reclaimed victim otherwise. evict() hands the frame over already in
+	 * LOADING, so there is no FREE window a concurrent claimer can steal.
 	 */
 	private int claimFrame() throws IOException {
-		for (;;) {
-			OptionalInt claimed = clockReplacer.claimFree();
-			if (claimed.isPresent()) {
-				return claimed.getAsInt();
-			}
-			int reclaimed = evict();
-			if (frameStates[reclaimed].tryBeginLoad()) {
-				return reclaimed;
-			}
+		OptionalInt claimed = clockReplacer.claimFree();
+		if (claimed.isPresent()) {
+			return claimed.getAsInt();
 		}
+		return evict();
 	}
 
 	/**
-	 * Hands a claimed frame back after a failed fill, making allocation
-	 * all-or-nothing: the caller either gets a filled frame or leaves the frame
-	 * FREE and sweepable, never stranded where no sweep looks. FrameState has no
-	 * direct LOADING to FREE edge, so an unfilled claim is finished and cleared
-	 * straight back out; a frame that will not unwind is reported as a
-	 * suppressed exception rather than replacing the original failure.
+	 * Hands a claimed frame back after a failed fill. abortLoad is LOADING to
+	 * FREE, including when the Frame object was never constructed. State
+	 * transitions before fields are nulled.
 	 */
 	private void releaseClaim(int frameIndex, Throwable cause) {
 		Frame frame = bufferPool[frameIndex];
-		if (frame == null) {
-			return;
-		}
-		// state transition first, fields second, matching Frame.clear(): a
-		// refused unwind must leave the frame's fields intact, not half-erased
 		try {
+			if (frame == null) {
+				frameStates[frameIndex].abortLoad();
+				return;
+			}
 			if (frame.state.state() == FrameState.State.LOADING) {
-				frame.markValid();
+				if (!frame.state.abortLoad()) {
+					throw new IllegalStateException(
+							"cannot abort load of frame " + frameIndex + ": " + frame.state);
+				}
+				frame.page = null;
+				frame.isDirty = false;
+				frame.pageKey = null;
+				return;
 			}
 			frame.clear();
 		} catch (IllegalStateException e) {
