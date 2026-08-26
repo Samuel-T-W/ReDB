@@ -84,6 +84,14 @@ public class FrameStateTest {
 	}
 
 	@Test
+	public void abortFlushReturnsFrameToValidWithoutRecycling() {
+		FrameState fs = new FrameState(State.FLUSHING, 0L, false, 7L);
+		assertTrue(fs.abortFlush());
+		assertEquals(State.VALID, fs.state());
+		assertEquals(7L, fs.version(), "aborting a flush is not a recycle, version must not move");
+	}
+
+	@Test
 	public void finishEvictResetsPinCountAndBumpsVersion() {
 		FrameState fs = new FrameState(State.EVICTING, 5L, true, 41L);
 		assertTrue(fs.finishEvict());
@@ -153,6 +161,13 @@ public class FrameStateTest {
 	public void abortEvictRejectedFromEveryNonEvictingState() {
 		for (State s : new State[] {State.FREE, State.LOADING, State.VALID, State.FLUSHING}) {
 			assertRejectedAndUnchanged(at(s), FrameState::abortEvict);
+		}
+	}
+
+	@Test
+	public void abortFlushRejectedFromEveryNonFlushingState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.VALID, State.EVICTING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::abortFlush);
 		}
 	}
 

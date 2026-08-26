@@ -170,6 +170,11 @@ public final class FrameState {
 		return transition(State.EVICTING, State.VALID);
 	}
 
+	/** FLUSHING back to VALID, for a flush that failed to land. Never transits FREE. */
+	public boolean abortFlush() {
+		return transition(State.FLUSHING, State.VALID);
+	}
+
 	private boolean transition(State expected, State target) {
 		for (;;) {
 			long cur = word.get();

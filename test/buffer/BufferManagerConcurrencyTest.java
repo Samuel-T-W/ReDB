@@ -141,6 +141,45 @@ public class BufferManagerConcurrencyTest {
 	}
 
 	@Test
+	public void testForceWaitsForMidFlushRatherThanSkippingDurability() throws Exception {
+		// force() used to skip FLUSHING frames and return, so a crash (or a
+		// later flush failure) could lose dirty bytes it claimed to persist.
+		// It must park until the in-flight write settles; the evictor itself
+		// makes the page durable on success.
+		String fileName = createFingerprintFile(3);
+		ControlledFlushManager bm = new ControlledFlushManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+		Page page = bm.getPage(fileName, 0);
+		page.getByteArray()[0] = (byte) 0x2A;
+		bm.markDirty(fileName, 0);
+		bm.unpinPage(fileName, 0);
+		bm.getPage(fileName, 1);
+		bm.unpinPage(fileName, 1);
+
+		Thread evictor = startGet(bm, fileName, 2, null);
+		assertTrue(bm.flushStarted.await(5, TimeUnit.SECONDS), "flush must start");
+
+		Thread forcer = new Thread(() -> {
+			try {
+				bm.force();
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		});
+		forcer.start();
+		forcer.join(200);
+		assertTrue(forcer.isAlive(), "force must wait for the in-flight flush");
+		bm.releaseFlush.countDown();
+		evictor.join(5000);
+		forcer.join(5000);
+		assertFalse(forcer.isAlive(), "force must finish after the flush settles");
+		try (RandomAccessFile raf = new RandomAccessFile(fileName, "r")) {
+			raf.seek(RawPage.getOffset(0));
+			assertEquals((byte) 0x2A, raf.readByte(), "the dirty bytes must be on disk");
+		}
+	}
+
+	@Test
 	public void testFailedFlushLeavesLatestBytesReachableInMemory() throws Exception {
 		// Worked example: page 0 is dirtied to 0x2A and its flush fails. The
 		// evicting caller gets the IOException, and page 0 still reads back 0x2A

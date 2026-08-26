@@ -312,17 +312,24 @@ public class BufferManager {
 	public void force() throws IOException {
 		globalLock.lock();
 		try {
-			Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
-			while (iter.hasNext()) {
-				Map.Entry<PageKey, Integer> entry = iter.next();
-				Frame frame = bufferPool[entry.getValue()];
-				if (!frame.isDirty || !frame.hasPage()) // !hasPage(): mid-flush elsewhere
-					continue;
-
-				// if dirty: write to disk and clear dirty flag
-				PageKey pageKey = entry.getKey();
-				writePageToDisk(pageKey.fileId(), frame.page);
-				frame.isDirty = false;
+			for (;;) {
+				boolean flushing = false;
+				for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
+					Frame frame = bufferPool[entry.getValue()];
+					if (!frame.hasPage()) {
+						// mid-flush: the evictor owns that write; skipping
+						// avoids a double-write, then we wait and recheck
+						flushing = true;
+						continue;
+					}
+					if (!frame.isDirty)
+						continue;
+					writePageToDisk(entry.getKey().fileId(), frame.page);
+					frame.isDirty = false;
+				}
+				if (!flushing)
+					return;
+				awaitFlushSettled();
 			}
 		} finally {
 			globalLock.unlock();
@@ -438,19 +445,24 @@ public class BufferManager {
 			} finally {
 				globalLock.lock();
 			}
-			if (failure != null) {
-				// the frame keeps its page AND its page-table entry, so the only
-				// copy of the dirty bytes stays reachable; it just walks the
-				// long way back to VALID, there being no FLUSHING to VALID edge.
-				// Nothing can take it while it is briefly FREE: every claim path
-				// runs under globalLock, which this thread holds.
-				if (!(evictFrame.state.finishEvict() && evictFrame.state.tryBeginLoad()
-						&& evictFrame.state.finishLoad())) {
-					failure.addSuppressed(new IllegalStateException(
-							"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
+			try {
+				if (failure != null) {
+					// stay installed: abortFlush is FLUSHING to VALID, never FREE,
+					// so a concurrent claim cannot steal the only dirty copy
+					if (!evictFrame.state.abortFlush()) {
+						failure.addSuppressed(new IllegalStateException(
+								"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
+					}
+					throw failure;
 				}
+				int frameIndex = evictFrame.frameIndex;
+				pageTable.remove(victimKey);
+				evictFrame.clear();
+				return frameIndex;
+			} finally {
+				// every flush exit, after the frame has settled. the 50ms await
+				// timeout is insurance against a missed signal, not the wait
 				flushSettled.signalAll();
-				throw failure;
 			}
 		}
 
