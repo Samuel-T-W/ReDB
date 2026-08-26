@@ -241,6 +241,37 @@ public class BufferManagerConcurrencyTest {
 	}
 
 	@Test
+	public void testConcurrentHitsOnAWarmPageDoNotRereadDisk() throws Exception {
+		final int threads = 16;
+		final int hits = 200;
+		String fileName = createFingerprintFile(1);
+		BufferManager bm = new BufferManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+		bm.getPage(fileName, 0);
+		bm.unpinPage(fileName, 0);
+		bm.resetIOCounts();
+
+		List<Runnable> tasks = new ArrayList<>();
+		for (int t = 0; t < threads; t++) {
+			tasks.add(() -> {
+				try {
+					for (int i = 0; i < hits; i++) {
+						Page page = bm.getPage(fileName, 0);
+						assertEquals((byte) 0, page.getByteArray()[0]);
+						bm.unpinPage(fileName, 0);
+					}
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+		}
+		runAllAtOnce(tasks);
+
+		assertEquals(0, bm.getReadIOCount(), "a warm hit must not go to disk");
+		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+	}
+
+	@Test
 	public void testColdPageRaceIssuesSingleDiskRead() throws Exception {
 		// Goal: N threads missing the same page must produce exactly ONE disk
 		// read; the LOADING frame in the page table makes the losers wait.

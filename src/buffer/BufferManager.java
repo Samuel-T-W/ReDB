@@ -38,10 +38,8 @@ public class BufferManager {
 	// re-evict it while this thread drops globalLock to flush.
 	private final ClockReplacer clockReplacer;
 
-	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
-	// (pin counts, dirty flags, contents). Page loads and dirty eviction
-	// flushes happen OUTSIDE the lock so one thread's disk I/O never blocks
-	// another thread's cache hits; force() keeps the coarse lock (rare).
+	// Global lock guarding miss/evict/force/discard. Cache hits pin through
+	// the frame state word and do not take this lock.
 	private final ReentrantLock globalLock = new ReentrantLock();
 
 	// A LOADING or FLUSHING frame stays in the page table, so a reader finds it
@@ -55,7 +53,7 @@ public class BufferManager {
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
-		this.pageTable = new HashMap<>();
+		this.pageTable = new ConcurrentHashMap<>();
 		this.bufferPool = new Frame[bufferSize];
 		this.frameStates = new FrameState[bufferSize];
 
@@ -104,6 +102,16 @@ public class BufferManager {
 	 */
 	public Page getPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
+		Integer hot = pageTable.get(pageKey);
+		if (hot != null) {
+			Frame frame = bufferPool[hot];
+			if (frame != null && frame.state.tryPin()) {
+				if (pageKey.equals(frame.pageKey)) {
+					return frame.page;
+				}
+				frame.state.unpin();
+			}
+		}
 		globalLock.lock();
 		try {
 			for (;;) {
