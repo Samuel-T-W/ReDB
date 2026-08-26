@@ -251,39 +251,31 @@ public class BufferManagerTest {
 	}
 
 	@Test
-	public void testLRUEviction() {
-		// Goal: validate LRU replacement policy.
-		// Spec mapping: "LRU policy... page is used on getPage/createPage."
-		// Setup: access A, B, then touch A, then allocate C.
-		// Expect: B is evicted (least recently used).
-		//
-		// Pseudocode:
-		// A=create+unpin, B=create+unpin, getPage(A), create C
-		// assert B evicted, A and C in memory
-		try {
-			String fileTwoName = "fileTwo";
-			File tempFile = File.createTempFile(fileTwoName, ".dat");
-			tempFile.deleteOnExit();
-			fileTwoName = tempFile.getAbsolutePath();
-			bm = new BufferManager(2);
-			bm.register(new TableEntry(fileTwoName, MOVIE_SCHEMA));
-			Page page_A = bm.createPage(fileTwoName, null);
-			bm.unpinPage(fileTwoName, page_A.getPid());
-			Page page_B = bm.createPage(fileTwoName, null);
-			bm.unpinPage(fileTwoName, page_B.getPid());
-			bm.getPage(fileTwoName, page_A.getPid());
-			Page page_C = bm.createPage(fileTwoName, null);
-		} catch (Exception e) {
-			e.printStackTrace();
+	void createPageEvictsInHandOrderAndNeverTakesAPinnedFrame() throws Exception {
+		File tempFile = File.createTempFile("fileTwo", ".dat");
+		tempFile.deleteOnExit();
+		String fileTwoName = tempFile.getAbsolutePath();
+		bm = new BufferManager(2);
+		bm.register(new TableEntry(fileTwoName, MOVIE_SCHEMA));
+
+		// pool of 2 holding freshly created pages 0 and 1, both unpinned
+		for (int pageId = 0; pageId < 2; pageId++) {
+			assertEquals(pageId, bm.createPage(fileTwoName, null).getPid());
+			bm.unpinPage(fileTwoName, pageId);
 		}
 
-		// Assert page B is evicted
-		int[] ids = bufferedPageIds();
-		int[] expected = new int[]{0, 2};
-		for (int i = 0; i < ids.length; i++) {
-			System.out.println(ids[0]);
-		}
-		assertArrayEquals(expected, ids);
+		// allocating page 2 sweeps both reference bits clear, then takes page 0:
+		// the frame the hand reaches first once nothing is referenced
+		bm.createPage(fileTwoName, null);
+		bm.unpinPage(fileTwoName, 2);
+		assertArrayEquals(new int[]{1, 2}, bufferedPageIds());
+
+		// pin page 1 and leave it pinned. The sweep for page 3 reaches it first
+		// and clears its reference bit, but must still refuse it as a victim and
+		// carry on to unpinned page 2.
+		bm.getPage(fileTwoName, 1);
+		bm.createPage(fileTwoName, null);
+		assertArrayEquals(new int[]{1, 3}, bufferedPageIds());
 	}
 
 	@Test

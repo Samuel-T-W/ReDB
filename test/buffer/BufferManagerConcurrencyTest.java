@@ -234,7 +234,7 @@ public class BufferManagerConcurrencyTest {
 
 			Runnable evictor = () -> {
 				try {
-					// page 0 sits at the LRU front, so these loads flush it out
+					// page 0 is unpinned, so these loads sweep it out of the pool
 					for (int pageId = 1; pageId <= 2; pageId++) {
 						bm.getPage(fileName, pageId);
 						bm.unpinPage(fileName, pageId);
