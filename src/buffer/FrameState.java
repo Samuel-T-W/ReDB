@@ -133,6 +133,54 @@ public final class FrameState {
 		}
 	}
 
+	// ------------------------------------------------------------ transitions
+
+	/** FREE to LOADING. */
+	public boolean tryBeginLoad() {
+		return transition(State.FREE, State.LOADING);
+	}
+
+	/** LOADING to VALID. */
+	public boolean finishLoad() {
+		return transition(State.LOADING, State.VALID);
+	}
+
+	/** EVICTING to FLUSHING, for a victim whose page must be written back. */
+	public boolean beginFlush() {
+		return transition(State.EVICTING, State.FLUSHING);
+	}
+
+	/** EVICTING or FLUSHING to FREE, resetting the pin count and bumping the version. */
+	public boolean finishEvict() {
+		for (;;) {
+			long cur = word.get();
+			State state = decodeState(cur);
+			if (state != State.EVICTING && state != State.FLUSHING) {
+				return false;
+			}
+			long next = encode(State.FREE, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
+			if (word.compareAndSet(cur, next)) {
+				return true;
+			}
+		}
+	}
+
+	/** EVICTING back to VALID, for an evictor that bails out. */
+	public boolean abortEvict() {
+		return transition(State.EVICTING, State.VALID);
+	}
+
+	private boolean transition(State expected, State target) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != expected) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withState(cur, target))) {
+				return true;
+			}
+		}
+	}
 
 	// -------------------------------------------------------------- accessors
 

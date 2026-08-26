@@ -33,6 +33,66 @@ public class FrameStateTest {
 		assertEquals(before, fs.snapshot(), "rejected operation mutated the word: " + fs);
 	}
 
+	// ------------------------------------------------------- legal transitions
+
+	@Test
+	public void fullLifecycleTransitionsSucceed() {
+		FrameState fs = new FrameState();
+		assertEquals(State.FREE, fs.state());
+
+		assertTrue(fs.tryBeginLoad());
+		assertEquals(State.LOADING, fs.state());
+
+		assertTrue(fs.finishLoad());
+		assertEquals(State.VALID, fs.state());
+
+		assertTrue(fs.tryPin());
+		assertEquals(1L, fs.pinCount());
+		assertTrue(fs.isReferenced(), "tryPin must set the reference bit in the same CAS");
+
+		fs.unpin();
+		assertEquals(0L, fs.pinCount());
+
+		assertTrue(fs.clearReferenced());
+		assertFalse(fs.isReferenced());
+
+		assertTrue(fs.tryClaimForEviction());
+		assertEquals(State.EVICTING, fs.state());
+
+		assertTrue(fs.beginFlush());
+		assertEquals(State.FLUSHING, fs.state());
+
+		assertTrue(fs.finishEvict());
+		assertEquals(State.FREE, fs.state());
+		assertEquals(1L, fs.version());
+	}
+
+	@Test
+	public void finishEvictSucceedsDirectlyFromEvicting() {
+		FrameState fs = at(State.EVICTING);
+		assertTrue(fs.finishEvict());
+		assertEquals(State.FREE, fs.state());
+		assertEquals(1L, fs.version());
+	}
+
+	@Test
+	public void abortEvictReturnsFrameToValid() {
+		FrameState fs = at(State.EVICTING);
+		assertTrue(fs.abortEvict());
+		assertEquals(State.VALID, fs.state());
+		assertEquals(0L, fs.version(), "aborting is not a recycle, version must not move");
+	}
+
+	@Test
+	public void finishEvictResetsPinCountAndBumpsVersion() {
+		FrameState fs = new FrameState(State.EVICTING, 5L, true, 41L);
+		assertTrue(fs.finishEvict());
+		assertEquals(State.FREE, fs.state());
+		assertEquals(0L, fs.pinCount());
+		assertFalse(fs.isReferenced());
+		assertEquals(42L, fs.version());
+	}
+
 	// ----------------------------------------------------- illegal transitions
 
 	@Test
@@ -59,6 +119,41 @@ public class FrameStateTest {
 	public void tryClaimForEvictionRejectedOnReferencedFrame() {
 		FrameState fs = new FrameState(State.VALID, 0L, true, 3L);
 		assertRejectedAndUnchanged(fs, FrameState::tryClaimForEviction);
+	}
+
+	@Test
+	public void tryBeginLoadRejectedFromEveryNonFreeState() {
+		for (State s : new State[] {State.LOADING, State.VALID, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::tryBeginLoad);
+		}
+	}
+
+	@Test
+	public void finishLoadRejectedFromEveryNonLoadingState() {
+		for (State s : new State[] {State.FREE, State.VALID, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::finishLoad);
+		}
+	}
+
+	@Test
+	public void beginFlushRejectedFromEveryNonEvictingState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.VALID, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::beginFlush);
+		}
+	}
+
+	@Test
+	public void finishEvictRejectedFromFreeLoadingAndValid() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.VALID}) {
+			assertRejectedAndUnchanged(at(s), FrameState::finishEvict);
+		}
+	}
+
+	@Test
+	public void abortEvictRejectedFromEveryNonEvictingState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.VALID, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::abortEvict);
+		}
 	}
 
 	@Test
@@ -122,6 +217,16 @@ public class FrameStateTest {
 		assertEquals(124L, fs.pinCount());
 		assertEquals(State.VALID, fs.state());
 		assertEquals(456L, fs.version());
+	}
+
+	@Test
+	public void versionWrapsAroundAtTwentyEightBits() {
+		FrameState fs = new FrameState(State.EVICTING, 0L, false, FrameState.MAX_VERSION);
+		assertTrue(fs.finishEvict());
+		assertEquals(0L, fs.version(), "version must wrap inside its 28 bits");
+		assertEquals(State.FREE, fs.state());
+		assertEquals(0L, fs.pinCount());
+		assertFalse(fs.isReferenced());
 	}
 
 	@Test
