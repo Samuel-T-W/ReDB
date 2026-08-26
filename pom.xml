@@ -11,6 +11,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <sentry.version>8.53.0</sentry.version>
     </properties>
 
     <dependencies>
@@ -41,12 +42,24 @@
             <version>2.2.224</version>
             <scope>test</scope>
         </dependency>
+        <!-- Sentry: eviction-stall Issues from the always-on QueryEngine path.
+             captureEvent is async; BufferPoolReporter implementations must not block. -->
+        <dependency>
+            <groupId>io.sentry</groupId>
+            <artifactId>sentry</artifactId>
+            <version>${sentry.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
         <sourceDirectory>src</sourceDirectory>
         <testSourceDirectory>test</testSourceDirectory>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>

@@ -6,6 +6,7 @@ import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -21,9 +22,9 @@ import storage.Page;
 import storage.RawPage;
 
 /**
- * Concurrency tests for the BufferManager's out-of-lock disk I/O paths:
- * exactly one disk read per racing cold page, pin counts that balance under
- * concurrent churn, and no stale reads across in-flight eviction flushes.
+ * Concurrency tests for the BufferManager's out-of-lock disk I/O paths: exactly
+ * one disk read per racing cold page, pin counts that balance under concurrent
+ * churn, and no stale reads across in-flight eviction flushes.
  */
 public class BufferManagerConcurrencyTest {
 
@@ -34,7 +35,10 @@ public class BufferManagerConcurrencyTest {
 		SCHEMA.put("title", 30);
 	}
 
-	/** Creates a temp heap file of {@code numPages} pages, page i filled with byte i. */
+	/**
+	 * Creates a temp heap file of {@code numPages} pages, page i filled with byte
+	 * i.
+	 */
 	private static String createFingerprintFile(int numPages) throws IOException {
 		File tempFile = File.createTempFile("bmConcurrency", ".dat");
 		tempFile.deleteOnExit();
@@ -49,7 +53,10 @@ public class BufferManagerConcurrencyTest {
 		return tempFile.getAbsolutePath();
 	}
 
-	/** Runs all tasks at once (released by a shared latch) and rethrows any worker failure. */
+	/**
+	 * Runs all tasks at once (released by a shared latch) and rethrows any worker
+	 * failure.
+	 */
 	private static void runAllAtOnce(List<? extends Runnable> tasks) throws Exception {
 		ExecutorService pool = Executors.newFixedThreadPool(tasks.size());
 		CountDownLatch start = new CountDownLatch(1);
@@ -138,9 +145,10 @@ public class BufferManagerConcurrencyTest {
 
 	@Test
 	public void testAllFramesPinnedThrowsForEveryRacingThread() throws Exception {
-		// Goal: when no frame can be reclaimed, every caller gets the eviction
-		// failure. A waiter on a failed in-flight load retries and surfaces the
-		// error from its own attempt rather than hanging.
+		// Goal: when no frame can be reclaimed and evictionWaitTimeout is ZERO,
+		// every caller gets the eviction failure immediately rather than waiting.
+		// A waiter on a failed in-flight load retries and surfaces the error
+		// from its own attempt rather than hanging.
 		final int threads = 4;
 		String fileName = createFingerprintFile(4);
 		BufferManager bm = new BufferManager(3);
@@ -153,12 +161,70 @@ public class BufferManagerConcurrencyTest {
 		List<Runnable> tasks = new ArrayList<>();
 		for (int t = 0; t < threads; t++) {
 			tasks.add(() -> {
-				RuntimeException ex = assertThrows(RuntimeException.class,
-						() -> bm.getPage(fileName, 3));
+				RuntimeException ex = assertThrows(RuntimeException.class, () -> bm.getPage(fileName, 3));
 				assertEquals("All frames are pinned, cannot evict", ex.getMessage());
 			});
 		}
 		runAllAtOnce(tasks);
+	}
+
+	@Test
+	public void stallTimeoutReportsStartedThenTimeout() throws Exception {
+		RecordingBufferPoolReporter recorder = new RecordingBufferPoolReporter();
+		String fileName = createFingerprintFile(4);
+		BufferManager bm = new BufferManager(3, recorder, Duration.ofMillis(50));
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileName, pageId);
+		}
+
+		RuntimeException ex = assertThrows(RuntimeException.class, () -> bm.getPage(fileName, 3));
+		assertEquals("All frames are pinned, cannot evict", ex.getMessage());
+
+		assertEquals(2, recorder.events.size());
+		RecordingBufferPoolReporter.Event started = recorder.events.get(0);
+		RecordingBufferPoolReporter.Event timeout = recorder.events.get(1);
+		assertEquals(RecordingBufferPoolReporter.Phase.STARTED, started.phase());
+		assertEquals(RecordingBufferPoolReporter.Phase.TIMEOUT, timeout.phase());
+		assertEquals(started.stallId(), timeout.stallId());
+		assertTrue(timeout.waitMillis() >= 40, "waitMillis=" + timeout.waitMillis());
+		assertNotNull(started.snapshot());
+		assertFalse(started.snapshot().isEmpty());
+	}
+
+	@Test
+	public void stallResolvesWhenAnotherThreadUnpins() throws Exception {
+		RecordingBufferPoolReporter recorder = new RecordingBufferPoolReporter();
+		String fileName = createFingerprintFile(4);
+		BufferManager bm = new BufferManager(3, recorder, Duration.ofSeconds(2));
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileName, pageId);
+		}
+
+		Thread unpinThread = new Thread(() -> {
+			try {
+				Thread.sleep(80);
+				bm.unpinPage(fileName, 0);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		});
+		unpinThread.start();
+		Page page = assertDoesNotThrow(() -> bm.getPage(fileName, 3));
+		assertNotNull(page);
+		unpinThread.join();
+
+		assertEquals(2, recorder.events.size());
+		RecordingBufferPoolReporter.Event started = recorder.events.get(0);
+		RecordingBufferPoolReporter.Event resolved = recorder.events.get(1);
+		assertEquals(RecordingBufferPoolReporter.Phase.STARTED, started.phase());
+		assertEquals(RecordingBufferPoolReporter.Phase.RESOLVED, resolved.phase());
+		assertEquals(started.stallId(), resolved.stallId());
+
+		bm.unpinPage(fileName, 3);
 	}
 
 	@Test
@@ -187,8 +253,7 @@ public class BufferManagerConcurrencyTest {
 					for (int i = 0; i < iterations; i++) {
 						int pageId = random.nextInt(numPages);
 						Page page = bm.getPage(fileName, pageId);
-						assertEquals((byte) pageId, page.getByteArray()[8],
-								"page content must match its fingerprint");
+						assertEquals((byte) pageId, page.getByteArray()[8], "page content must match its fingerprint");
 						if (random.nextBoolean()) {
 							// content is unchanged, so the eviction flush writes
 							// back identical bytes; this just exercises the
@@ -246,8 +311,7 @@ public class BufferManagerConcurrencyTest {
 			Runnable reader = () -> {
 				try {
 					Page reloaded = bm.getPage(fileName, 0);
-					assertEquals(stamp, reloaded.getByteArray()[0],
-							"reader must never observe pre-flush bytes");
+					assertEquals(stamp, reloaded.getByteArray()[0], "reader must never observe pre-flush bytes");
 					bm.unpinPage(fileName, 0);
 				} catch (IOException e) {
 					throw new RuntimeException(e);
