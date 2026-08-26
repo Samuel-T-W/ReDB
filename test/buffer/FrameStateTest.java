@@ -172,6 +172,45 @@ public class FrameStateTest {
 	}
 
 	@Test
+	public void abortLoadReturnsFrameToFreeAndBumpsVersion() {
+		FrameState fs = new FrameState(State.LOADING, 0L, true, 4L);
+		assertTrue(fs.abortLoad());
+		assertEquals(State.FREE, fs.state());
+		assertEquals(0L, fs.pinCount());
+		assertFalse(fs.isReferenced());
+		assertEquals(5L, fs.version());
+	}
+
+	@Test
+	public void abortLoadRejectedFromEveryNonLoadingState() {
+		for (State s : new State[] {State.FREE, State.VALID, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::abortLoad);
+		}
+	}
+
+	@Test
+	public void reuseAfterEvictHandsTheFrameToLoading() {
+		FrameState fromEvicting = new FrameState(State.EVICTING, 2L, true, 8L);
+		assertTrue(fromEvicting.reuseAfterEvict());
+		assertEquals(State.LOADING, fromEvicting.state());
+		assertEquals(0L, fromEvicting.pinCount());
+		assertFalse(fromEvicting.isReferenced());
+		assertEquals(9L, fromEvicting.version());
+
+		FrameState fromFlushing = at(State.FLUSHING);
+		assertTrue(fromFlushing.reuseAfterEvict());
+		assertEquals(State.LOADING, fromFlushing.state());
+		assertEquals(1L, fromFlushing.version());
+	}
+
+	@Test
+	public void reuseAfterEvictRejectedFromFreeLoadingAndValid() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.VALID}) {
+			assertRejectedAndUnchanged(at(s), FrameState::reuseAfterEvict);
+		}
+	}
+
+	@Test
 	public void clearReferencedRejectedWhenNotValidOrNotReferenced() {
 		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
 			assertRejectedAndUnchanged(new FrameState(s, 0L, true, 0L), FrameState::clearReferenced);

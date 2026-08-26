@@ -150,6 +150,11 @@ public final class FrameState {
 		return transition(State.EVICTING, State.FLUSHING);
 	}
 
+	/** LOADING to FREE, for a fill that failed before the frame was published. */
+	public boolean abortLoad() {
+		return recycle(State.LOADING);
+	}
+
 	/** EVICTING or FLUSHING to FREE, resetting the pin count and bumping the version. */
 	public boolean finishEvict() {
 		for (;;) {
@@ -158,8 +163,21 @@ public final class FrameState {
 			if (state != State.EVICTING && state != State.FLUSHING) {
 				return false;
 			}
-			long next = encode(State.FREE, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
-			if (word.compareAndSet(cur, next)) {
+			if (word.compareAndSet(cur, recycled(cur, State.FREE))) {
+				return true;
+			}
+		}
+	}
+
+	/** EVICTING or FLUSHING to LOADING, so the evictor keeps exclusive ownership. */
+	public boolean reuseAfterEvict() {
+		for (;;) {
+			long cur = word.get();
+			State state = decodeState(cur);
+			if (state != State.EVICTING && state != State.FLUSHING) {
+				return false;
+			}
+			if (word.compareAndSet(cur, recycled(cur, State.LOADING))) {
 				return true;
 			}
 		}
@@ -185,6 +203,22 @@ public final class FrameState {
 				return true;
 			}
 		}
+	}
+
+	private boolean recycle(State expected) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != expected) {
+				return false;
+			}
+			if (word.compareAndSet(cur, recycled(cur, State.FREE))) {
+				return true;
+			}
+		}
+	}
+
+	private static long recycled(long cur, State target) {
+		return encode(target, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
 	}
 
 	// -------------------------------------------------------------- accessors
