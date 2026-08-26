@@ -100,6 +100,40 @@ public final class FrameState {
 		}
 	}
 
+	// --------------------------------------------------------------- eviction
+
+	/**
+	 * Claims exclusive ownership of the frame for eviction: VALID to EVICTING,
+	 * permitted only when the frame is unpinned and unreferenced. Exactly one
+	 * thread can win this handoff; everyone else, including concurrent pinners,
+	 * is locked out because {@link #tryPin()} requires VALID.
+	 */
+	public boolean tryClaimForEviction() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodePinCount(cur) != 0 || decodeReferenced(cur)) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withState(cur, State.EVICTING))) {
+				return true;
+			}
+		}
+	}
+
+	/** Gives a referenced VALID frame its second chance by clearing the bit. */
+	public boolean clearReferenced() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || !decodeReferenced(cur)) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withReferenced(cur, false))) {
+				return true;
+			}
+		}
+	}
+
+
 	// -------------------------------------------------------------- accessors
 
 	public State state() {
@@ -173,6 +207,10 @@ public final class FrameState {
 
 	private static long withPinCount(long word, long pinCount) {
 		return (word & ~PIN_MASK) | (pinCount & PIN_MASK);
+	}
+
+	private static long withState(long word, State state) {
+		return (word & ~(STATE_MASK << STATE_SHIFT)) | ((long) state.ordinal() << STATE_SHIFT);
 	}
 
 	private static long withReferenced(long word, boolean referenced) {

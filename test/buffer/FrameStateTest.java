@@ -26,6 +26,49 @@ public class FrameStateTest {
 		return new FrameState(state, 0L, false, 0L);
 	}
 
+	/** Asserts the call returns false and does not disturb a single bit of the word. */
+	private static void assertRejectedAndUnchanged(FrameState fs, java.util.function.Predicate<FrameState> op) {
+		long before = fs.snapshot();
+		assertFalse(op.test(fs), "operation should have been rejected from " + fs);
+		assertEquals(before, fs.snapshot(), "rejected operation mutated the word: " + fs);
+	}
+
+	// ----------------------------------------------------- illegal transitions
+
+	@Test
+	public void tryPinRejectedFromEveryNonValidState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::tryPin);
+		}
+	}
+
+	@Test
+	public void tryClaimForEvictionRejectedFromEveryNonValidState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::tryClaimForEviction);
+		}
+	}
+
+	@Test
+	public void tryClaimForEvictionRejectedOnPinnedFrame() {
+		FrameState fs = new FrameState(State.VALID, 1L, false, 3L);
+		assertRejectedAndUnchanged(fs, FrameState::tryClaimForEviction);
+	}
+
+	@Test
+	public void tryClaimForEvictionRejectedOnReferencedFrame() {
+		FrameState fs = new FrameState(State.VALID, 0L, true, 3L);
+		assertRejectedAndUnchanged(fs, FrameState::tryClaimForEviction);
+	}
+
+	@Test
+	public void clearReferencedRejectedWhenNotValidOrNotReferenced() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(new FrameState(s, 0L, true, 0L), FrameState::clearReferenced);
+		}
+		assertRejectedAndUnchanged(new FrameState(State.VALID, 0L, false, 0L), FrameState::clearReferenced);
+	}
+
 	// --------------------------------------------------------- encode / decode
 
 	@Test
@@ -156,5 +199,86 @@ public class FrameStateTest {
 		}
 		assertEquals(0L, fs.pinCount(), "lost or doubled update in the CAS loop");
 		assertEquals(State.VALID, fs.state());
+	}
+
+	@Test
+	public void exactlyOneThreadWinsTheEvictionClaim() throws Exception {
+		final int threads = 16;
+		for (int round = 0; round < 50; round++) {
+			FrameState fs = at(State.VALID);
+			CountDownLatch ready = new CountDownLatch(threads);
+			CountDownLatch go = new CountDownLatch(1);
+			AtomicInteger winners = new AtomicInteger();
+			ExecutorService pool = Executors.newFixedThreadPool(threads);
+			try {
+				for (int t = 0; t < threads; t++) {
+					pool.submit(() -> {
+						ready.countDown();
+						go.await();
+						if (fs.tryClaimForEviction()) {
+							winners.incrementAndGet();
+						}
+						return null;
+					});
+				}
+				assertTrue(ready.await(30, TimeUnit.SECONDS));
+				go.countDown();
+				pool.shutdown();
+				assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS));
+			} finally {
+				pool.shutdownNow();
+			}
+			assertEquals(1, winners.get(), "eviction claim must hand ownership to exactly one thread");
+			assertEquals(State.EVICTING, fs.state());
+		}
+	}
+
+	@Test
+	public void evictionWinnerExcludesAllSubsequentPinners() throws Exception {
+		final int pinners = 8;
+		for (int round = 0; round < 100; round++) {
+			FrameState fs = at(State.VALID);
+			CyclicBarrier start = new CyclicBarrier(pinners + 1);
+			AtomicBoolean violation = new AtomicBoolean(false);
+			ExecutorService pool = Executors.newFixedThreadPool(pinners + 1);
+			try {
+				for (int t = 0; t < pinners; t++) {
+					pool.submit(() -> {
+						start.await();
+						for (int i = 0; i < 200; i++) {
+							if (fs.tryPin()) {
+								// A successful pin proves the frame was VALID at CAS time,
+								// so it cannot have been claimed for eviction beforehand.
+								if (fs.state() == State.EVICTING) {
+									violation.set(true);
+								}
+								fs.unpin();
+							}
+						}
+						return null;
+					});
+				}
+				Future<Boolean> evictor = pool.submit(() -> {
+					start.await();
+					boolean claimed = false;
+					for (int i = 0; i < 200 && !claimed; i++) {
+						fs.clearReferenced();
+						claimed = fs.tryClaimForEviction();
+					}
+					return claimed;
+				});
+				boolean claimed = evictor.get(60, TimeUnit.SECONDS);
+				pool.shutdown();
+				assertTrue(pool.awaitTermination(60, TimeUnit.SECONDS));
+				if (claimed) {
+					assertEquals(State.EVICTING, fs.state());
+					assertEquals(0L, fs.pinCount(),
+							"an evicted frame must never gain pins after the claim");
+				}
+			} finally {
+				pool.shutdownNow();
+			}
+			assertFalse(violation.get(), "a pin succeeded on a frame already claimed for eviction");
+		}
 	}
 }
