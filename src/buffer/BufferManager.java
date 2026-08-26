@@ -15,7 +15,9 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import storage.*;
 
@@ -49,13 +51,15 @@ public class BufferManager {
 	private final ReentrantLock globalLock = new ReentrantLock();
 
 	// In-flight disk I/O markers, guarded by globalLock. A load marker means
-	// some thread is reading that page from disk; a flush marker means an
-	// evicted dirty page is being written back. getPage waits on these futures
+	// some thread is reading that page from disk; getPage waits on that future
 	// outside the lock and then retries the lookup, so each caller pins for
-	// itself under the lock and a page mid-flush is never re-read from disk
-	// before its latest bytes have landed (stale-read prevention).
+	// itself under the lock.
 	private final Map<PageKey, CompletableFuture<Page>> inFlightLoads = new HashMap<>();
-	private final Map<PageKey, CompletableFuture<Void>> inFlightFlushes = new HashMap<>();
+
+	// A dirty victim keeps its page-table entry while its bytes go to disk, so a
+	// reader finds the frame FLUSHING instead of missing and reading stale bytes.
+	// It parks on this condition; the evictor signals when the frame settles.
+	private final Condition flushSettled = globalLock.newCondition();
 
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private final LongAdder readIOCount = new LongAdder();
@@ -115,7 +119,6 @@ public class BufferManager {
 
 		while (true) {
 			CompletableFuture<Page> loadInProgress;
-			CompletableFuture<Void> flushInProgress = null;
 			CompletableFuture<Page> myLoad = null;
 
 			globalLock.lock();
@@ -123,21 +126,22 @@ public class BufferManager {
 				// get from buffer pool
 				if (pageTable.containsKey(pageKey)) {
 					Frame frame = this.bufferPool[pageTable.get(pageKey)];
+					if (!frame.hasPage()) {
+						// FLUSHING: the dirty bytes are still on their way to
+						// disk, so the on-disk copy is stale. Park, look again.
+						awaitFlushSettled();
+						continue;
+					}
 					frame.pin();
 					return frame.page;
 				}
 
 				loadInProgress = inFlightLoads.get(pageKey);
 				if (loadInProgress == null) {
-					// reading disk while this page's eviction flush is still in
-					// flight would return stale bytes; the flush must finish first
-					flushInProgress = inFlightFlushes.get(pageKey);
-					if (flushInProgress == null) {
-						// genuine miss: claim the load so racing threads wait on it
-						// instead of issuing duplicate disk reads
-						myLoad = new CompletableFuture<>();
-						inFlightLoads.put(pageKey, myLoad);
-					}
+					// genuine miss: claim the load so racing threads wait on it
+					// instead of issuing duplicate disk reads
+					myLoad = new CompletableFuture<>();
+					inFlightLoads.put(pageKey, myLoad);
 				}
 			} finally {
 				globalLock.unlock();
@@ -148,10 +152,6 @@ public class BufferManager {
 			// by the time the future completes
 			if (loadInProgress != null) {
 				awaitQuietly(loadInProgress);
-				continue;
-			}
-			if (flushInProgress != null) {
-				awaitQuietly(flushInProgress);
 				continue;
 			}
 
@@ -198,6 +198,15 @@ public class BufferManager {
 		try {
 			future.join();
 		} catch (CompletionException | CancellationException ignored) {
+		}
+	}
+
+	/** Parks (never spins) until a flush settles. globalLock must be held. */
+	private void awaitFlushSettled() {
+		try {
+			flushSettled.await(50, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
 		}
 	}
 
@@ -307,7 +316,7 @@ public class BufferManager {
 			while (iter.hasNext()) {
 				Map.Entry<PageKey, Integer> entry = iter.next();
 				Frame frame = bufferPool[entry.getValue()];
-				if (!frame.isDirty)
+				if (!frame.isDirty || !frame.hasPage()) // !hasPage(): mid-flush elsewhere
 					continue;
 
 				// if dirty: write to disk and clear dirty flag
@@ -340,6 +349,7 @@ public class BufferManager {
 	public void discardFile(String fileId) {
 		while (true) {
 			List<CompletableFuture<?>> inFlight = new ArrayList<>();
+			boolean flushing = false;
 			globalLock.lock();
 			try {
 				Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
@@ -352,6 +362,11 @@ public class BufferManager {
 						throw new IllegalStateException(
 								"Cannot discard file with pinned page: " + entry.getKey());
 					}
+					if (!frame.hasPage()) {
+						// mid-flush: its evictor owns the frame and drops it
+						flushing = true;
+						continue;
+					}
 					iter.remove();
 					// clear() drives the word to FREE: all a later claim needs
 					frame.clear();
@@ -360,17 +375,16 @@ public class BufferManager {
 					if (entry.getKey().fileId().equals(fileId))
 						inFlight.add(entry.getValue());
 				}
-				for (Map.Entry<PageKey, CompletableFuture<Void>> entry : inFlightFlushes.entrySet()) {
-					if (entry.getKey().fileId().equals(fileId))
-						inFlight.add(entry.getValue());
+				if (flushing && inFlight.isEmpty()) {
+					awaitFlushSettled();
 				}
 			} finally {
 				globalLock.unlock();
 			}
-			if (inFlight.isEmpty())
+			if (!flushing && inFlight.isEmpty())
 				break;
 			// wait outside the lock, then re-check: a drained load re-adds its
-			// page to the pageTable, a drained flush does not
+			// page to the pageTable, a settled flush removes its frame from it
 			for (CompletableFuture<?> future : inFlight) {
 				awaitQuietly(future);
 			}
@@ -391,9 +405,9 @@ public class BufferManager {
 	 * index for immediate reuse by the caller; throws if all frames are pinned.
 	 * Must be called with globalLock held.
 	 *
-	 * <p>If the victim is dirty, the victim is removed from the page table and
-	 * an in-flight flush marker is installed BEFORE the lock is released for
-	 * the disk write, so a concurrent getPage for the victim's key waits for
+	 * <p>If the victim is dirty, it keeps its page-table entry and moves to
+	 * FLUSHING BEFORE the lock is released for the disk write, so a concurrent
+	 * getPage for the victim's key finds the frame and parks for
 	 * the flush instead of reading stale bytes from disk. The reclaimed frame is
 	 * returned FREE, so a caller that fails to claim or fill it still leaves it
 	 * findable by the next sweep.
@@ -408,12 +422,13 @@ public class BufferManager {
 
 		Frame evictFrame = bufferPool[victim.getAsInt()];
 		PageKey victimKey = evictFrame.pageKey;
-		pageTable.remove(victimKey);
 
 		// if frame dirty write to disk first, outside the lock
 		if (evictFrame.isDirty) {
-			CompletableFuture<Void> flush = new CompletableFuture<>();
-			inFlightFlushes.put(victimKey, flush);
+			if (!evictFrame.state.beginFlush()) {
+				throw new IllegalStateException(
+						"victim frame " + evictFrame.frameIndex + " is not claimed: " + evictFrame.state);
+			}
 			globalLock.unlock();
 			IOException failure = null;
 			try {
@@ -422,33 +437,33 @@ public class BufferManager {
 				failure = e;
 			} finally {
 				globalLock.lock();
-				inFlightFlushes.remove(victimKey);
 			}
 			if (failure != null) {
-				// put the victim back so its latest bytes stay reachable in
-				// memory; waiters retry and find it in the page table
-				pageTable.put(victimKey, evictFrame.frameIndex);
-				// and release the eviction claim: a frame left in EVICTING is
-				// unpinnable and invisible to every future sweep, so the pool
-				// would silently lose it
-				if (!evictFrame.state.abortEvict()) {
+				// the frame keeps its page AND its page-table entry, so the only
+				// copy of the dirty bytes stays reachable; it just walks the
+				// long way back to VALID, there being no FLUSHING to VALID edge.
+				// Nothing can take it while it is briefly FREE: every claim path
+				// runs under globalLock, which this thread holds.
+				if (!(evictFrame.state.finishEvict() && evictFrame.state.tryBeginLoad()
+						&& evictFrame.state.finishLoad())) {
 					failure.addSuppressed(new IllegalStateException(
 							"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
 				}
-				flush.completeExceptionally(failure);
+				flushSettled.signalAll();
 				throw failure;
 			}
-			flush.complete(null);
 		}
 
 		// evict frame content and hand the frame to the caller
 		int frameIndex = evictFrame.frameIndex;
+		pageTable.remove(victimKey);
 		evictFrame.clear();
+		flushSettled.signalAll();
 		return frameIndex;
 	}
 
-	/** Write a page to disk. */
-	private void writePageToDisk(String fileId, Page page) throws IOException {
+	/** Write a page to disk. Overridable so tests can stall or fail a flush. */
+	void writePageToDisk(String fileId, Page page) throws IOException {
 		writeIOCount.increment();
 		try (RandomAccessFile raf = new RandomAccessFile(fileId, "rw")) {
 			long offset = RawPage.getOffset(page.getPid());
@@ -537,8 +552,8 @@ public class BufferManager {
 		if (frame == null) {
 			return;
 		}
-		frame.page = null;
-		frame.pageKey = null;
+		// state transition first, fields second, matching Frame.clear(): a
+		// refused unwind must leave the frame's fields intact, not half-erased
 		try {
 			if (frame.state.state() == FrameState.State.LOADING) {
 				frame.markValid();
@@ -607,7 +622,7 @@ public class BufferManager {
 
 	// package-private, for concurrency tests: frames whose state word says FREE.
 	// In a quiescent pool, free frames + pageTable entries == bufferSize (a frame
-	// mid-flush is briefly in neither).
+	// mid-load is briefly in neither; a mid-flush frame stays in the page table).
 	int getFreeFrameCount() {
 		globalLock.lock();
 		try {
