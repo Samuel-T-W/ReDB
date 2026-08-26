@@ -3,17 +3,12 @@ package buffer;
 import catalog.CatalogEntry;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
@@ -44,21 +39,14 @@ public class BufferManager {
 	private final ClockReplacer clockReplacer;
 
 	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
-	// (pin counts, dirty flags, contents) and the in-flight maps below. Page
-	// loads and dirty eviction flushes happen OUTSIDE the lock
-	// so one thread's disk I/O never blocks another thread's cache hits;
-	// force() keeps the coarse lock (rare).
+	// (pin counts, dirty flags, contents). Page loads and dirty eviction
+	// flushes happen OUTSIDE the lock so one thread's disk I/O never blocks
+	// another thread's cache hits; force() keeps the coarse lock (rare).
 	private final ReentrantLock globalLock = new ReentrantLock();
 
-	// In-flight disk I/O markers, guarded by globalLock. A load marker means
-	// some thread is reading that page from disk; getPage waits on that future
-	// outside the lock and then retries the lookup, so each caller pins for
-	// itself under the lock.
-	private final Map<PageKey, CompletableFuture<Page>> inFlightLoads = new HashMap<>();
-
-	// A dirty victim keeps its page-table entry while its bytes go to disk, so a
-	// reader finds the frame FLUSHING instead of missing and reading stale bytes.
-	// It parks on this condition; the evictor signals when the frame settles.
+	// A LOADING or FLUSHING frame stays in the page table, so a reader finds it
+	// and parks here instead of issuing a duplicate read or seeing stale disk
+	// bytes. Signalled when the frame settles (VALID or gone).
 	private final Condition flushSettled = globalLock.newCondition();
 
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
@@ -116,92 +104,79 @@ public class BufferManager {
 	 */
 	public Page getPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
-
-		while (true) {
-			CompletableFuture<Page> loadInProgress;
-			CompletableFuture<Page> myLoad = null;
-
-			globalLock.lock();
-			try {
-				// get from buffer pool
-				if (pageTable.containsKey(pageKey)) {
-					Frame frame = this.bufferPool[pageTable.get(pageKey)];
-					if (!frame.hasPage()) {
-						// FLUSHING: the dirty bytes are still on their way to
-						// disk, so the on-disk copy is stale. Park, look again.
-						awaitFlushSettled();
-						continue;
-					}
-					frame.pin();
-					return frame.page;
-				}
-
-				loadInProgress = inFlightLoads.get(pageKey);
-				if (loadInProgress == null) {
-					// genuine miss: claim the load so racing threads wait on it
-					// instead of issuing duplicate disk reads
-					myLoad = new CompletableFuture<>();
-					inFlightLoads.put(pageKey, myLoad);
-				}
-			} finally {
-				globalLock.unlock();
-			}
-
-			// wait outside the lock, then retry the lookup: each caller must pin
-			// for itself under the lock, and the page may have been evicted again
-			// by the time the future completes
-			if (loadInProgress != null) {
-				awaitQuietly(loadInProgress);
-				continue;
-			}
-
-			// this thread owns the load; the disk read happens outside the lock
-			try {
-				readIOCount.increment();
-				byte[] loaded_data = new byte[RawPage.MAX_PAGE_LEN];
-				try (RandomAccessFile raf = new RandomAccessFile(fileId, "r")) {
-					raf.seek(RawPage.getOffset(pageId));
-					raf.readFully(loaded_data);
-				}
-				RawPage page = new RawPage(pageId);
-				page.fillPageData(loaded_data);
-
-				globalLock.lock();
-				try {
-					Page pinned = addToFrame(pageKey, page, true);
-					inFlightLoads.remove(pageKey);
-					myLoad.complete(pinned);
-					return pinned;
-				} finally {
-					globalLock.unlock();
-				}
-			} catch (IOException | RuntimeException e) {
-				globalLock.lock();
-				try {
-					inFlightLoads.remove(pageKey);
-				} finally {
-					globalLock.unlock();
-				}
-				// waiters retry and surface their own error from their own attempt
-				myLoad.completeExceptionally(e);
-				throw e;
-			}
-		}
-	}
-
-	/**
-	 * Waits for an in-flight disk operation owned by another thread. Failures
-	 * are deliberately swallowed: the caller retries the lookup and either
-	 * succeeds or raises its own exception from its own attempt.
-	 */
-	private static void awaitQuietly(CompletableFuture<?> future) {
+		globalLock.lock();
 		try {
-			future.join();
-		} catch (CompletionException | CancellationException ignored) {
+			for (;;) {
+				Integer frameIndex = pageTable.get(pageKey);
+				if (frameIndex != null) {
+					Frame frame = bufferPool[frameIndex];
+					if (frame.hasPage()) {
+						frame.pin();
+						return frame.page;
+					}
+					awaitFlushSettled();
+					continue;
+				}
+
+				int claimed = claimFrame();
+				if (pageTable.containsKey(pageKey)) {
+					// claimFrame may drop the lock to flush; another loader won
+					releaseClaim(claimed, null);
+					continue;
+				}
+				try {
+					if (bufferPool[claimed] == null) {
+						bufferPool[claimed] = new Frame(claimed, frameStates[claimed]);
+					}
+					Frame frame = bufferPool[claimed];
+					if (frame.page != null) {
+						throw new IllegalStateException("Expected Free Frame object");
+					}
+					frame.pageKey = pageKey;
+					pageTable.put(pageKey, claimed);
+				} catch (RuntimeException e) {
+					releaseClaim(claimed, e);
+					throw e;
+				}
+
+				Page page = null;
+				Exception loadError = null;
+				globalLock.unlock();
+				try {
+					page = readPageFromDisk(pageKey);
+				} catch (IOException | RuntimeException e) {
+					loadError = e;
+				} finally {
+					globalLock.lock();
+				}
+				if (loadError != null) {
+					pageTable.remove(pageKey);
+					releaseClaim(claimed, loadError);
+					flushSettled.signalAll();
+					if (loadError instanceof IOException ioe)
+						throw ioe;
+					throw (RuntimeException) loadError;
+				}
+				try {
+					Frame frame = bufferPool[claimed];
+					frame.page = page;
+					frame.markValid();
+					frame.pin();
+					return page;
+				} catch (RuntimeException e) {
+					pageTable.remove(pageKey);
+					releaseClaim(claimed, e);
+					throw e;
+				} finally {
+					flushSettled.signalAll();
+				}
+			}
+		} finally {
+			globalLock.unlock();
 		}
 	}
 
-	/** Parks (never spins) until a flush settles. globalLock must be held. */
+	/** Parks (never spins) until a load or flush settles. globalLock must be held. */
 	private void awaitFlushSettled() {
 		try {
 			flushSettled.await(50, TimeUnit.MILLISECONDS);
@@ -355,8 +330,7 @@ public class BufferManager {
 	 */
 	public void discardFile(String fileId) {
 		while (true) {
-			List<CompletableFuture<?>> inFlight = new ArrayList<>();
-			boolean flushing = false;
+			boolean inFlight = false;
 			globalLock.lock();
 			try {
 				Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
@@ -370,31 +344,22 @@ public class BufferManager {
 								"Cannot discard file with pinned page: " + entry.getKey());
 					}
 					if (!frame.hasPage()) {
-						// mid-flush: its evictor owns the frame and drops it
-						flushing = true;
+						// mid-load or mid-flush: its owner drops the frame
+						inFlight = true;
 						continue;
 					}
 					iter.remove();
 					// clear() drives the word to FREE: all a later claim needs
 					frame.clear();
 				}
-				for (Map.Entry<PageKey, CompletableFuture<Page>> entry : inFlightLoads.entrySet()) {
-					if (entry.getKey().fileId().equals(fileId))
-						inFlight.add(entry.getValue());
-				}
-				if (flushing && inFlight.isEmpty()) {
+				if (inFlight) {
 					awaitFlushSettled();
 				}
 			} finally {
 				globalLock.unlock();
 			}
-			if (!flushing && inFlight.isEmpty())
+			if (!inFlight)
 				break;
-			// wait outside the lock, then re-check: a drained load re-adds its
-			// page to the pageTable, a settled flush removes its frame from it
-			for (CompletableFuture<?> future : inFlight) {
-				awaitQuietly(future);
-			}
 		}
 
 		fileStatesLock.lock();
@@ -487,8 +452,7 @@ public class BufferManager {
 	/**
 	 * Places a page into a free frame, evicting if needed. Must be called with
 	 * globalLock held. May temporarily release the lock while a dirty victim is
-	 * flushed (see evict); the caller's in-flight load marker (or the fresh page
-	 * id, for createPage) keeps pageKey invisible to other threads meanwhile.
+	 * flushed (see evict).
 	 */
 	private Page addToFrame(PageKey pageKey, Page page, boolean is_pinned) throws IOException, IllegalStateException {
 
@@ -530,6 +494,19 @@ public class BufferManager {
 		return page;
 	}
 
+	/** Read a page from disk. Overridable so tests can stall a load. */
+	RawPage readPageFromDisk(PageKey pageKey) throws IOException {
+		readIOCount.increment();
+		byte[] loaded_data = new byte[RawPage.MAX_PAGE_LEN];
+		try (RandomAccessFile raf = new RandomAccessFile(pageKey.fileId(), "r")) {
+			raf.seek(RawPage.getOffset(pageKey.pageId()));
+			raf.readFully(loaded_data);
+		}
+		RawPage page = new RawPage(pageKey.pageId());
+		page.fillPageData(loaded_data);
+		return page;
+	}
+
 	/**
 	 * Returns a frame claimed in LOADING and owned by this caller: a FREE one if
 	 * the pool has any, a reclaimed victim otherwise. Both routes leave through
@@ -559,7 +536,7 @@ public class BufferManager {
 	 * straight back out; a frame that will not unwind is reported as a
 	 * suppressed exception rather than replacing the original failure.
 	 */
-	private void releaseClaim(int frameIndex, RuntimeException cause) {
+	private void releaseClaim(int frameIndex, Throwable cause) {
 		Frame frame = bufferPool[frameIndex];
 		if (frame == null) {
 			return;
@@ -572,7 +549,11 @@ public class BufferManager {
 			}
 			frame.clear();
 		} catch (IllegalStateException e) {
-			cause.addSuppressed(e);
+			if (cause != null) {
+				cause.addSuppressed(e);
+			} else {
+				throw e;
+			}
 		}
 	}
 
@@ -590,7 +571,7 @@ public class BufferManager {
 			int i = 0;
 			while (iter.hasNext()) {
 				Map.Entry<PageKey, Integer> entry = iter.next();
-				pageID[i] = this.bufferPool[entry.getValue()].page.getPid();
+				pageID[i] = entry.getKey().pageId();
 				i++;
 			}
 			return pageID;
