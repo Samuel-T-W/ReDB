@@ -31,6 +31,12 @@ public class BufferManager {
 	private final ReentrantLock fileStatesLock = new ReentrantLock();
 	private Map<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
+	// Packed atomic state word per frame, index-aligned with bufferPool and
+	// populated in full at construction: bufferPool entries are built lazily, so
+	// the words cannot hang off the Frame objects without leaving holes. Each
+	// lazily built Frame adopts the word already sitting at its index, which is
+	// also what the clock replacer will sweep over.
+	final FrameState[] frameStates;
 	private Queue<Integer> freeFrameIndices;
 
 	// Global lock guarding all buffer pool state: pageTable (including its LRU
@@ -57,6 +63,7 @@ public class BufferManager {
 		this.bufferSize = bufferSize;
 		this.pageTable = new LinkedHashMap<>();
 		this.bufferPool = new Frame[bufferSize];
+		this.frameStates = new FrameState[bufferSize];
 		this.freeFrameIndices = new LinkedList<>();
 
 		this.catalog = new ConcurrentHashMap<>();
@@ -68,6 +75,7 @@ public class BufferManager {
 		// add all free indices
 		for (int i = 0; i < bufferSize; i++) {
 			freeFrameIndices.add(i);
+			frameStates[i] = new FrameState();
 		}
 	}
 
@@ -115,7 +123,7 @@ public class BufferManager {
 				if (pageTable.containsKey(pageKey)) {
 					movePageToBottomOfLru(pageKey);
 					Frame frame = this.bufferPool[pageTable.get(pageKey)];
-					frame.pinCount++;
+					frame.pin();
 					return frame.page;
 				}
 
@@ -284,8 +292,8 @@ public class BufferManager {
 				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 			}
 			Frame frame = bufferPool[frameIndex];
-			if (frame.pinCount > 0)
-				frame.pinCount--;
+			if (frame.state.pinCount() > 0)
+				frame.state.unpin();
 		} finally {
 			globalLock.unlock();
 		}
@@ -340,7 +348,7 @@ public class BufferManager {
 					if (!entry.getKey().fileId().equals(fileId))
 						continue;
 					Frame frame = bufferPool[entry.getValue()];
-					if (frame.pinCount > 0) {
+					if (frame.state.pinCount() > 0) {
 						throw new IllegalStateException(
 								"Cannot discard file with pinned page: " + entry.getKey());
 					}
@@ -396,7 +404,7 @@ public class BufferManager {
 		Frame evictFrame = null;
 		for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
 			Frame frame = bufferPool[entry.getValue()];
-			if (frame.pinCount == 0) {
+			if (frame.state.pinCount() == 0) {
 				evictFrame = frame;
 				break;
 			}
@@ -464,7 +472,7 @@ public class BufferManager {
 
 		// load if frame object instantiated otherwise create a new one
 		if (bufferPool[freeFrameIndex] == null) {
-			bufferPool[freeFrameIndex] = new Frame(freeFrameIndex);
+			bufferPool[freeFrameIndex] = new Frame(freeFrameIndex, frameStates[freeFrameIndex]);
 		}
 		Frame frame = bufferPool[freeFrameIndex];
 
@@ -476,8 +484,9 @@ public class BufferManager {
 		// assign page to frame
 		frame.page = page;
 		frame.pageKey = pageKey;
+		frame.markValid();
 		if (is_pinned) {
-			frame.pinCount++;
+			frame.pin();
 		}
 
 		// add page to page table and automatically moves it to the bottom of the lru
@@ -541,7 +550,7 @@ public class BufferManager {
 		try {
 			int total = 0;
 			for (Integer frameIndex : pageTable.values()) {
-				total += bufferPool[frameIndex].pinCount;
+				total += (int) bufferPool[frameIndex].state.pinCount();
 			}
 			return total;
 		} finally {
@@ -570,7 +579,7 @@ public class BufferManager {
 			// get from buffer pool
 			if (pageTable.containsKey(pageKey)) {
 				Frame frame = this.bufferPool[pageTable.get(pageKey)];
-				return frame.pinCount;
+				return (int) frame.state.pinCount();
 			} else {
 				return -1;
 			}
