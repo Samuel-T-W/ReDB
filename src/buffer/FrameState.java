@@ -61,6 +61,45 @@ public final class FrameState {
 		this.word = new AtomicLong(encode(state, pinCount, referenced, version));
 	}
 
+	// ---------------------------------------------------------------- pinning
+
+	/**
+	 * Pins the frame and sets the reference bit in one atomic step. Succeeds
+	 * only from {@link State#VALID}; returns false from any other state, and
+	 * also returns false rather than wrapping when the pin count is already at
+	 * {@link #MAX_PIN_COUNT} (a wrap would silently corrupt the state bits).
+	 */
+	public boolean tryPin() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID) {
+				return false;
+			}
+			long pins = decodePinCount(cur);
+			if (pins == MAX_PIN_COUNT) {
+				return false;
+			}
+			long next = withReferenced(withPinCount(cur, pins + 1), true);
+			if (word.compareAndSet(cur, next)) {
+				return true;
+			}
+		}
+	}
+
+	/** Releases one pin. Throws {@link IllegalStateException} if none is held. */
+	public void unpin() {
+		for (;;) {
+			long cur = word.get();
+			long pins = decodePinCount(cur);
+			if (pins == 0) {
+				throw new IllegalStateException("unpin() with pinCount already 0: " + describe(cur));
+			}
+			if (word.compareAndSet(cur, withPinCount(cur, pins - 1))) {
+				return;
+			}
+		}
+	}
+
 	// -------------------------------------------------------------- accessors
 
 	public State state() {
@@ -130,5 +169,13 @@ public final class FrameState {
 				+ ", pin=" + decodePinCount(word)
 				+ ", ref=" + (decodeReferenced(word) ? 1 : 0)
 				+ ", ver=" + decodeVersion(word) + "]";
+	}
+
+	private static long withPinCount(long word, long pinCount) {
+		return (word & ~PIN_MASK) | (pinCount & PIN_MASK);
+	}
+
+	private static long withReferenced(long word, boolean referenced) {
+		return referenced ? (word | REF_BIT) : (word & ~REF_BIT);
 	}
 }

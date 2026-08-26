@@ -22,6 +22,10 @@ import org.junit.jupiter.api.Test;
  */
 public class FrameStateTest {
 
+	private static FrameState at(State state) {
+		return new FrameState(state, 0L, false, 0L);
+	}
+
 	// --------------------------------------------------------- encode / decode
 
 	@Test
@@ -68,6 +72,16 @@ public class FrameStateTest {
 	}
 
 	@Test
+	public void referenceBitDoesNotDisturbNeighbouringFields() {
+		FrameState fs = new FrameState(State.VALID, 123L, false, 456L);
+		assertTrue(fs.tryPin());
+		assertTrue(fs.isReferenced());
+		assertEquals(124L, fs.pinCount());
+		assertEquals(State.VALID, fs.state());
+		assertEquals(456L, fs.version());
+	}
+
+	@Test
 	public void encodeRejectsOutOfRangeFields() {
 		assertThrows(IllegalArgumentException.class,
 				() -> FrameState.encode(State.VALID, FrameState.MAX_PIN_COUNT + 1, false, 0L));
@@ -81,5 +95,66 @@ public class FrameStateTest {
 		FrameState fs = new FrameState(State.VALID, 3L, true, 7L);
 		assertEquals("FrameState[state=VALID, pin=3, ref=1, ver=7]", fs.toString());
 		assertEquals("FrameState[state=FREE, pin=0, ref=0, ver=0]", new FrameState().toString());
+	}
+
+	// ------------------------------------------------------------ pin counting
+
+	@Test
+	public void unpinBelowZeroThrows() {
+		FrameState fs = at(State.VALID);
+		long before = fs.snapshot();
+		assertThrows(IllegalStateException.class, fs::unpin);
+		assertEquals(before, fs.snapshot());
+	}
+
+	@Test
+	public void pinCountOverflowIsRefusedWithoutCorruptingOtherFields() {
+		FrameState fs = new FrameState(State.VALID, FrameState.MAX_PIN_COUNT, true, 99L);
+		long before = fs.snapshot();
+		assertFalse(fs.tryPin(), "pinning at the maximum must fail rather than wrap");
+		assertEquals(before, fs.snapshot());
+		assertEquals(State.VALID, fs.state());
+		assertEquals(FrameState.MAX_PIN_COUNT, fs.pinCount());
+		assertTrue(fs.isReferenced());
+		assertEquals(99L, fs.version());
+
+		fs.unpin();
+		assertEquals(FrameState.MAX_PIN_COUNT - 1, fs.pinCount());
+		assertTrue(fs.tryPin());
+		assertEquals(FrameState.MAX_PIN_COUNT, fs.pinCount());
+	}
+
+	// -------------------------------------------------------------- contention
+
+	@Test
+	public void concurrentPinUnpinPairsLeaveCountAtZero() throws Exception {
+		final int threads = 8;
+		final int iterations = 20_000;
+		FrameState fs = at(State.VALID);
+		CyclicBarrier start = new CyclicBarrier(threads);
+		ExecutorService pool = Executors.newFixedThreadPool(threads);
+		try {
+			List<Future<Integer>> futures = new ArrayList<>();
+			for (int t = 0; t < threads; t++) {
+				futures.add(pool.submit(() -> {
+					start.await();
+					int pinned = 0;
+					for (int i = 0; i < iterations; i++) {
+						if (fs.tryPin()) {
+							pinned++;
+							fs.unpin();
+						}
+					}
+					return pinned;
+				}));
+			}
+			for (Future<Integer> f : futures) {
+				assertEquals(iterations, f.get(60, TimeUnit.SECONDS).intValue());
+			}
+		} finally {
+			pool.shutdownNow();
+		}
+		assertEquals(0L, fs.pinCount(), "lost or doubled update in the CAS loop");
+		assertEquals(State.VALID, fs.state());
 	}
 }
