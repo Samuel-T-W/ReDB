@@ -102,86 +102,79 @@ public class BufferManager {
 	 */
 	public Page getPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Integer hot = pageTable.get(pageKey);
-		if (hot != null) {
-			Frame frame = bufferPool[hot];
-			if (frame != null && frame.state.tryPin()) {
-				if (pageKey.equals(frame.pageKey)) {
-					return frame.page;
-				}
-				frame.state.unpin();
-			}
-		}
-		globalLock.lock();
-		try {
-			for (;;) {
-				Integer frameIndex = pageTable.get(pageKey);
-				if (frameIndex != null) {
-					Frame frame = bufferPool[frameIndex];
-					if (frame.hasPage()) {
-						frame.pin();
+		for (;;) {
+			Integer hot = pageTable.get(pageKey);
+			if (hot != null) {
+				Frame frame = bufferPool[hot];
+				if (frame != null && frame.state.tryPin()) {
+					if (pageKey.equals(frame.pageKey)) {
 						return frame.page;
 					}
-					awaitFlushSettled();
-					continue;
+					frame.state.unpin();
+					pageTable.remove(pageKey, hot);
+				} else {
+					awaitIo();
 				}
-
-				int claimed = claimFrame();
-				if (pageTable.containsKey(pageKey)) {
-					// claimFrame may drop the lock to flush; another loader won
-					releaseClaim(claimed, null);
-					continue;
-				}
-				try {
-					if (bufferPool[claimed] == null) {
-						bufferPool[claimed] = new Frame(claimed, frameStates[claimed]);
-					}
-					Frame frame = bufferPool[claimed];
-					if (frame.page != null) {
-						throw new IllegalStateException("Expected Free Frame object");
-					}
-					frame.pageKey = pageKey;
-					pageTable.put(pageKey, claimed);
-				} catch (RuntimeException e) {
-					releaseClaim(claimed, e);
-					throw e;
-				}
-
-				Page page = null;
-				Exception loadError = null;
-				globalLock.unlock();
-				try {
-					page = readPageFromDisk(pageKey);
-				} catch (IOException | RuntimeException e) {
-					loadError = e;
-				} finally {
-					globalLock.lock();
-				}
-				if (loadError != null) {
-					pageTable.remove(pageKey);
-					releaseClaim(claimed, loadError);
-					flushSettled.signalAll();
-					if (loadError instanceof IOException ioe)
-						throw ioe;
-					throw (RuntimeException) loadError;
-				}
-				try {
-					Frame frame = bufferPool[claimed];
-					frame.page = page;
-					frame.markValid();
-					frame.pin();
-					return page;
-				} catch (RuntimeException e) {
-					pageTable.remove(pageKey);
-					releaseClaim(claimed, e);
-					throw e;
-				} finally {
-					flushSettled.signalAll();
-				}
+				continue;
 			}
+			int claimed = claimFrame();
+			if (!installLoading(claimed, pageKey)) {
+				releaseClaim(claimed, null);
+				continue;
+			}
+			try {
+				Page page = readPageFromDisk(pageKey);
+				Frame frame = bufferPool[claimed];
+				frame.page = page;
+				frame.markValid();
+				return page;
+			} catch (IOException | RuntimeException e) {
+				pageTable.remove(pageKey, claimed);
+				releaseClaim(claimed, e);
+				if (e instanceof IOException ioe) throw ioe;
+				throw (RuntimeException) e;
+			} finally {
+				signalSettled();
+			}
+		}
+	}
+
+	private void awaitIo() {
+		globalLock.lock();
+		try {
+			awaitFlushSettled();
 		} finally {
 			globalLock.unlock();
 		}
+	}
+
+	private void signalSettled() {
+		globalLock.lock();
+		try {
+			flushSettled.signalAll();
+		} finally {
+			globalLock.unlock();
+		}
+	}
+
+	private boolean installLoading(int claimed, PageKey pageKey) {
+		if (bufferPool[claimed] == null) {
+			try {
+				bufferPool[claimed] = new Frame(claimed, frameStates[claimed]);
+			} catch (RuntimeException | Error t) {
+				frameStates[claimed].abortLoad();
+				throw t;
+			}
+		}
+		Frame frame = bufferPool[claimed];
+		if (frame.page != null)
+			throw new IllegalStateException("Expected Free Frame object");
+		frame.pageKey = pageKey;
+		if (pageTable.putIfAbsent(pageKey, claimed) != null) {
+			frame.pageKey = null;
+			return false;
+		}
+		return true;
 	}
 
 	/** Parks (never spins) until a load or flush settles. globalLock must be held. */
@@ -286,6 +279,7 @@ public class BufferManager {
 			Frame frame = bufferPool[frameIndex];
 			if (frame.state.pinCount() > 0)
 				frame.state.unpin();
+			flushSettled.signalAll();
 		} finally {
 			globalLock.unlock();
 		}
@@ -409,37 +403,30 @@ public class BufferManager {
 				throw new IllegalStateException(
 						"victim frame " + evictFrame.frameIndex + " is not claimed: " + evictFrame.state);
 			}
-			globalLock.unlock();
 			IOException failure = null;
 			try {
 				writePageToDisk(victimKey.fileId(), evictFrame.page);
 			} catch (IOException e) {
 				failure = e;
-			} finally {
-				globalLock.lock();
 			}
-			try {
-				if (failure != null) {
-					if (!evictFrame.state.abortFlush()) {
-						failure.addSuppressed(new IllegalStateException(
-								"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
-					}
-					throw failure;
+			if (failure != null) {
+				if (!evictFrame.state.abortFlush()) {
+					failure.addSuppressed(new IllegalStateException(
+							"frame " + evictFrame.frameIndex + " stuck after failed flush: " + evictFrame.state));
 				}
-				return handOffForReuse(evictFrame, victimKey);
-			} finally {
-				// every flush exit, after the frame has settled. the 50ms await
-				// timeout is insurance against a missed signal, not the wait
-				flushSettled.signalAll();
+				signalSettled();
+				throw failure;
 			}
 		}
 
-		return handOffForReuse(evictFrame, victimKey);
+		int reused = handOffForReuse(evictFrame, victimKey);
+		signalSettled();
+		return reused;
 	}
 
 	/** EVICTING/FLUSHING to LOADING, fields cleared after the state word moves. */
 	private int handOffForReuse(Frame frame, PageKey victimKey) {
-		pageTable.remove(victimKey);
+		if (victimKey != null) pageTable.remove(victimKey, frame.frameIndex);
 		if (!frame.state.reuseAfterEvict()) {
 			throw new IllegalStateException("cannot reuse frame " + frame.frameIndex + ": " + frame.state);
 		}
@@ -499,9 +486,6 @@ public class BufferManager {
 		frame.page = page;
 		frame.pageKey = pageKey;
 		frame.markValid();
-		if (is_pinned) {
-			frame.pin();
-		}
 
 		// add page to page table
 		pageTable.put(pageKey, frameIndex);
@@ -528,11 +512,27 @@ public class BufferManager {
 	 * LOADING, so there is no FREE window a concurrent claimer can steal.
 	 */
 	private int claimFrame() throws IOException {
-		OptionalInt claimed = clockReplacer.claimFree();
-		if (claimed.isPresent()) {
-			return claimed.getAsInt();
+		int pinnedWaits = 0;
+		for (;;) {
+			OptionalInt claimed = clockReplacer.claimFree();
+			if (claimed.isPresent()) return claimed.getAsInt();
+			try {
+				return evict();
+			} catch (RuntimeException e) {
+				if (!"All frames are pinned, cannot evict".equals(e.getMessage())) throw e;
+				if (!hasTransientFrame() && pinnedWaits++ >= 2) throw e;
+				globalLock.lock();
+				try { awaitFlushSettled(); } finally { globalLock.unlock(); }
+			}
 		}
-		return evict();
+	}
+
+	private boolean hasTransientFrame() {
+		for (FrameState fs : frameStates) {
+			FrameState.State s = fs.state();
+			if (s != FrameState.State.FREE && s != FrameState.State.VALID) return true;
+		}
+		return false;
 	}
 
 	/**

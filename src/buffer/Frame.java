@@ -8,8 +8,8 @@ public class Frame {
 	// FrameState[], so every pin/unpin is one CAS on shared state.
 	public final FrameState state;
 	public Page page;
-	public boolean isDirty;
-	public PageKey pageKey;
+	public volatile boolean isDirty;
+	public volatile PageKey pageKey;
 
 	public int frameIndex; // value persisted through clear's as it's attached to the index in buffer pool
 
