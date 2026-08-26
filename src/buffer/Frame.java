@@ -22,10 +22,13 @@ public class Frame {
 		return this.state.state() == FrameState.State.VALID;
 	}
 
-	/** Publishes a newly filled frame: FREE to LOADING to VALID. */
+	/**
+	 * Publishes a filled frame: LOADING to VALID. The caller reaches LOADING by
+	 * claiming the frame out of FREE, which is what makes the fill exclusive.
+	 */
 	public void markValid() {
-		if (!state.tryBeginLoad() || !state.finishLoad()) {
-			throw new IllegalStateException("frame " + frameIndex + " is not free to fill: " + describeState());
+		if (!state.finishLoad()) {
+			throw new IllegalStateException("frame " + frameIndex + " is not claimed for filling: " + describeState());
 		}
 	}
 

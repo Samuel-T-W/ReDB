@@ -25,6 +25,7 @@ public final class ClockReplacer {
 
 	private final FrameState[] frames;
 	private final AtomicInteger hand = new AtomicInteger();
+	private final AtomicInteger freeHand = new AtomicInteger();
 
 	public ClockReplacer(FrameState[] frames) {
 		if (frames == null) {
@@ -70,6 +71,33 @@ public final class ClockReplacer {
 			}
 			// Lost the race, or the frame was pinned or re-referenced in the
 			// gap. Move on; the hand has already advanced past it.
+		}
+		return OptionalInt.empty();
+	}
+
+	/**
+	 * Sweeps for a frame that is FREE and claims it for filling.
+	 *
+	 * <p>Kept separate from the victim sweep on purpose: it has its own hand, so
+	 * looking for a free frame never moves the clock or costs a VALID frame its
+	 * second chance. The claim is the single compare-and-swap inside
+	 * {@link FrameState#tryBeginLoad()}, never a read followed by a write, so of
+	 * two threads seeing one frame as FREE exactly one leaves with it.
+	 *
+	 * @return the index of a frame now owned by this caller in state
+	 *         {@link FrameState.State#LOADING}, or empty if no frame was free.
+	 */
+	public OptionalInt claimFree() {
+		final int n = frames.length;
+		int start = freeHand.get();
+		for (int offset = 0; offset < n; offset++) {
+			int index = position(start + offset, n);
+			if (frames[index].tryBeginLoad()) {
+				// purely a hint for where the next claim starts looking, so a
+				// racy update costs at most a wasted probe
+				freeHand.set(index + 1);
+				return OptionalInt.of(index);
+			}
 		}
 		return OptionalInt.empty();
 	}
