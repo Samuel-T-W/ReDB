@@ -16,6 +16,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import storage.Page;
 import storage.RawPage;
@@ -69,6 +70,96 @@ public class BufferManagerConcurrencyTest {
 		} finally {
 			pool.shutdownNow();
 		}
+	}
+
+	/** A manager whose eviction flush can be stalled and failed on demand. */
+	private static final class ControlledFlushManager extends BufferManager {
+		final CountDownLatch flushStarted = new CountDownLatch(1);
+		final CountDownLatch releaseFlush = new CountDownLatch(1);
+		volatile boolean failFlush = false;
+
+		ControlledFlushManager(int bufferSize) { super(bufferSize); }
+
+		@Override
+		void writePageToDisk(String fileId, Page page) throws IOException {
+			flushStarted.countDown();
+			try {
+				releaseFlush.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			if (failFlush)
+				throw new IOException("injected flush failure");
+			super.writePageToDisk(fileId, page);
+		}
+	}
+
+	// Starts a getPage on its own thread, recording byte 0 of the page into sink.
+	private static Thread startGet(BufferManager bm, String fileName, int pageId, byte[] sink) {
+		Thread thread = new Thread(() -> {
+			try {
+				Page page = bm.getPage(fileName, pageId);
+				if (sink != null) {
+					sink[0] = page.getByteArray()[0];
+				}
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		});
+		thread.start();
+		return thread;
+	}
+
+	@Test
+	public void testReaderOfMidFlushPageWaitsInsteadOfReadingStaleDisk() throws Exception {
+		// Worked example: page 0 reads 0x00 on disk and is dirtied to 0x2A in
+		// memory. While that 0x2A is mid-write, a reader of page 0 must not see
+		// the 0x00 still on disk: it finds the FLUSHING frame and waits for it.
+		String fileName = createFingerprintFile(3);
+		ControlledFlushManager bm = new ControlledFlushManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+		Page page = bm.getPage(fileName, 0);
+		page.getByteArray()[0] = (byte) 0x2A;
+		bm.markDirty(fileName, 0);
+		bm.unpinPage(fileName, 0);
+		bm.getPage(fileName, 1); // fills the other frame, leaving it evictable
+		bm.unpinPage(fileName, 1);
+
+		// the clock hand reaches page 0 first, so loading page 2 flushes it
+		Thread evictor = startGet(bm, fileName, 2, null);
+		assertTrue(bm.flushStarted.await(5, TimeUnit.SECONDS), "flush must start");
+		assertEquals(0, bm.getPinCount(fileName, 0), "the victim stays in the page table");
+
+		byte[] seen = new byte[1];
+		Thread reader = startGet(bm, fileName, 0, seen);
+		reader.join(200);
+		assertTrue(reader.isAlive(), "reader must wait for the flush to land");
+		bm.releaseFlush.countDown();
+		reader.join(5000);
+		evictor.join(5000);
+		assertEquals((byte) 0x2A, seen[0], "reader must see the flushed bytes");
+	}
+
+	@Test
+	public void testFailedFlushLeavesLatestBytesReachableInMemory() throws Exception {
+		// Worked example: page 0 is dirtied to 0x2A and its flush fails. The
+		// evicting caller gets the IOException, and page 0 still reads back 0x2A
+		// from memory, with no disk read: memory holds the only copy.
+		String fileName = createFingerprintFile(2);
+		ControlledFlushManager bm = new ControlledFlushManager(1);
+		bm.register(new TableEntry(fileName, SCHEMA));
+		bm.failFlush = true;
+		bm.releaseFlush.countDown();
+		Page page = bm.getPage(fileName, 0);
+		page.getByteArray()[0] = (byte) 0x2A;
+		bm.markDirty(fileName, 0);
+		bm.unpinPage(fileName, 0);
+
+		assertThrows(IOException.class, () -> bm.getPage(fileName, 1));
+		bm.resetIOCounts();
+		assertEquals((byte) 0x2A, bm.getPage(fileName, 0).getByteArray()[0], "dirty bytes survive");
+		assertEquals(0, bm.getReadIOCount(), "the page must come from memory, not disk");
+		bm.unpinPage(fileName, 0);
 	}
 
 	@Test
@@ -214,7 +305,7 @@ public class BufferManagerConcurrencyTest {
 	@Test
 	public void testGetPageWaitsForInFlightFlushOfSameKey() throws Exception {
 		// Goal: a getPage racing the eviction flush of the same (dirty) page
-		// must wait for the flush marker instead of reading stale bytes from
+		// must wait for the FLUSHING frame instead of reading stale bytes from
 		// disk. The overlap cannot be forced deterministically without an I/O
 		// fault injection hook, so this loops the race; a stale read shows up
 		// as a fingerprint from an earlier iteration.
