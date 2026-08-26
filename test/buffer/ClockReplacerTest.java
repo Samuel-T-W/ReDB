@@ -93,4 +93,85 @@ public class ClockReplacerTest {
 			assertEquals(State.VALID, frame.state());
 		}
 	}
+
+	@Test
+	public void pinnedFrameIsSkippedWhileItsNeighbourIsEvicted() {
+		FrameState[] frames = pool(pinned(3L), evictable(), pinned(1L));
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		assertEquals(OptionalInt.of(1), clock.findVictim());
+		for (int sweep = 0; sweep < 20; sweep++) {
+			assertEquals(OptionalInt.empty(), clock.findVictim(),
+					"only the unpinned frame was ever a candidate");
+		}
+	}
+
+	@Test
+	public void allFramesPinnedReturnsEmptyWithoutHangingOrThrowing() {
+		FrameState[] frames = new FrameState[64];
+		for (int i = 0; i < frames.length; i++) {
+			frames[i] = pinned(1L);
+		}
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		assertTimeoutPreemptively(Duration.ofSeconds(5),
+				() -> assertEquals(OptionalInt.empty(), clock.findVictim()),
+				"the sweep must be bounded, not spin until a frame frees up");
+	}
+
+	@Test
+	public void nonValidStatesAreSkipped() {
+		FrameState[] frames = pool(
+				new FrameState(State.FREE, 0L, false, 0L),
+				new FrameState(State.LOADING, 0L, false, 0L),
+				new FrameState(State.EVICTING, 0L, false, 0L),
+				new FrameState(State.FLUSHING, 0L, false, 0L));
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		assertTimeoutPreemptively(Duration.ofSeconds(5),
+				() -> assertEquals(OptionalInt.empty(), clock.findVictim()));
+
+		assertEquals(State.FREE, frames[0].state());
+		assertEquals(State.LOADING, frames[1].state());
+		assertEquals(State.EVICTING, frames[2].state());
+		assertEquals(State.FLUSHING, frames[3].state());
+	}
+
+	@Test
+	public void emptyPoolReturnsEmpty() {
+		ClockReplacer clock = new ClockReplacer(new FrameState[0]);
+		assertEquals(OptionalInt.empty(), clock.findVictim());
+		assertEquals(0, clock.hand());
+	}
+
+	// ------------------------------------------------------------------ hand
+
+	@Test
+	public void handAdvancesAndWrapsAcrossTheArrayBoundary() {
+		FrameState[] frames = pool(evictable(), evictable(), evictable());
+		ClockReplacer clock = new ClockReplacer(frames);
+		assertEquals(0, clock.hand());
+
+		assertEquals(OptionalInt.of(0), clock.findVictim());
+		assertEquals(1, clock.hand());
+
+		assertEquals(OptionalInt.of(1), clock.findVictim());
+		assertEquals(2, clock.hand());
+
+		assertEquals(OptionalInt.of(2), clock.findVictim());
+		assertEquals(0, clock.hand(), "the hand must wrap back to the start of the pool");
+	}
+
+	@Test
+	public void handKeepsSweepingPastNonCandidates() {
+		FrameState[] frames = pool(
+				new FrameState(State.FREE, 0L, false, 0L),
+				new FrameState(State.FREE, 0L, false, 0L),
+				evictable(),
+				new FrameState(State.FREE, 0L, false, 0L));
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		assertEquals(OptionalInt.of(2), clock.findVictim());
+		assertEquals(3, clock.hand(), "the hand rests just past the frame it claimed");
+	}
 }
