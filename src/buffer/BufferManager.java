@@ -169,6 +169,7 @@ public class BufferManager {
 		Frame frame = bufferPool[claimed];
 		if (frame.page != null)
 			throw new IllegalStateException("Expected Free Frame object");
+		pageTable.values().removeIf(v -> v == claimed);
 		frame.pageKey = pageKey;
 		if (pageTable.putIfAbsent(pageKey, claimed) != null) {
 			frame.pageKey = null;
@@ -237,16 +238,31 @@ public class BufferManager {
 	 * @param pageId
 	 *            The ID of the page to mark as dirty.
 	 */
+	private Frame frameHolding(PageKey pageKey) {
+		Integer idx = pageTable.get(pageKey);
+		if (idx != null) {
+			Frame frame = bufferPool[idx];
+			if (frame != null && pageKey.equals(frame.pageKey))
+				return frame;
+			pageTable.remove(pageKey, idx);
+		}
+		for (Frame frame : bufferPool) {
+			if (frame != null && pageKey.equals(frame.pageKey)) {
+				pageTable.putIfAbsent(pageKey, frame.frameIndex);
+				return frame;
+			}
+		}
+		return null;
+	}
+
 	public void markDirty(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Integer frameIndex = pageTable.get(pageKey);
-		if (frameIndex == null) {
+		Frame frame = frameHolding(pageKey);
+		if (frame == null) {
 			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 		}
-		Frame frame = bufferPool[frameIndex];
-		if (frame != null && pageKey.equals(frame.pageKey) && frame.hasPage()) {
+		if (frame.hasPage())
 			frame.isDirty = true;
-		}
 	}
 
 	/**
@@ -259,12 +275,11 @@ public class BufferManager {
 	 */
 	public void unpinPage(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Integer frameIndex = pageTable.get(pageKey);
-		if (frameIndex == null) {
+		Frame frame = frameHolding(pageKey);
+		if (frame == null) {
 			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 		}
-		Frame frame = bufferPool[frameIndex];
-		if (frame != null && pageKey.equals(frame.pageKey) && frame.state.pinCount() > 0)
+		if (frame.state.pinCount() > 0)
 			frame.state.unpin();
 		signalSettled();
 	}
@@ -591,16 +606,10 @@ public class BufferManager {
 
 	// For testing only
 	public int getTotalPinCount() {
-		globalLock.lock();
-		try {
-			int total = 0;
-			for (Integer frameIndex : pageTable.values()) {
-				total += (int) bufferPool[frameIndex].state.pinCount();
-			}
-			return total;
-		} finally {
-			globalLock.unlock();
-		}
+		int total = 0;
+		for (FrameState fs : frameStates)
+			total += (int) fs.pinCount();
+		return total;
 	}
 
 	// package-private, for concurrency tests: frames whose state word says FREE.
@@ -636,6 +645,53 @@ public class BufferManager {
 			}
 		} finally {
 			globalLock.unlock();
+		}
+	}
+
+	/**
+	 * For testing only. A quiescent pool has no in-flight I/O, no pins, no
+	 * page-table entry pointing at FREE or at a frame whose PageKey disagrees,
+	 * and FREE + VALID equals the pool size.
+	 */
+	public void assertQuiescentInvariants() {
+		int[] counts = new int[FrameState.State.values().length];
+		for (int i = 0; i < bufferSize; i++) {
+			FrameState fs = frameStates[i];
+			counts[fs.state().ordinal()]++;
+			if (fs.pinCount() != 0) {
+				throw new IllegalStateException("frame " + i + " still pinned: " + fs);
+			}
+		}
+		int inFlight = counts[FrameState.State.LOADING.ordinal()]
+				+ counts[FrameState.State.EVICTING.ordinal()]
+				+ counts[FrameState.State.FLUSHING.ordinal()];
+		if (inFlight != 0) {
+			throw new IllegalStateException("quiescent pool still has in-flight frames");
+		}
+		if (counts[FrameState.State.FREE.ordinal()] + counts[FrameState.State.VALID.ordinal()] != bufferSize) {
+			throw new IllegalStateException("FREE+VALID does not equal pool size");
+		}
+		int tableValid = 0;
+		for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
+			Integer idx = entry.getValue();
+			if (idx == null || idx < 0 || idx >= bufferSize) {
+				throw new IllegalStateException("pageTable index out of range: " + entry);
+			}
+			Frame frame = bufferPool[idx];
+			if (frame == null || frame.state.state() == FrameState.State.FREE) {
+				throw new IllegalStateException("pageTable points at FREE: " + entry.getKey());
+			}
+			if (!entry.getKey().equals(frame.pageKey)) {
+				throw new IllegalStateException(
+						"stale pageTable mapping " + entry.getKey() + " -> " + frame.pageKey);
+			}
+			if (frame.state.state() == FrameState.State.VALID) {
+				tableValid++;
+			}
+		}
+		if (tableValid != counts[FrameState.State.VALID.ordinal()]) {
+			throw new IllegalStateException(
+					"VALID frames " + counts[FrameState.State.VALID.ordinal()] + " vs table " + tableValid);
 		}
 	}
 }

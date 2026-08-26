@@ -119,6 +119,7 @@ public class QueryEngineTest {
 		}
 		assertEquals(0, engine.getBufferManager().getTotalPinCount(),
 				"all pages must be unpinned after queries close");
+		engine.getBufferManager().assertQuiescentInvariants();
 	}
 
 	// Mixed access methods so scan and index queries share the pool at once

@@ -334,6 +334,7 @@ public class BufferManagerConcurrencyTest {
 		runAllAtOnce(tasks);
 
 		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+		bm.assertQuiescentInvariants();
 	}
 
 	@Test
@@ -404,10 +405,7 @@ public class BufferManagerConcurrencyTest {
 		runAllAtOnce(tasks);
 
 		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
-		int usedFrames = bm.listPageID().length;
-		assertTrue(usedFrames <= poolSize, "pageTable can never exceed the pool");
-		assertEquals(poolSize, bm.getFreeFrameCount() + usedFrames,
-				"free frames plus used frames must account for the whole pool");
+		bm.assertQuiescentInvariants();
 	}
 
 	@Test

@@ -119,6 +119,7 @@ public class ConcurrentQueryStressTest {
 					"rows for range " + i);
 		}
 		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
+		shared.assertQuiescentInvariants();
 	}
 
 	private void assertConcurrentSharedMatchesBaseline(boolean useIndex) throws Exception {
@@ -150,6 +151,7 @@ public class ConcurrentQueryStressTest {
 			pool.shutdownNow();
 		}
 		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
+		shared.assertQuiescentInvariants();
 	}
 
 	// ----------------------
@@ -191,6 +193,7 @@ public class ConcurrentQueryStressTest {
 
 		BufferManager shared = engine.getBufferManager();
 		assertEquals(0, shared.getTotalPinCount(), "all pages must be unpinned after queries close");
+		shared.assertQuiescentInvariants();
 		assertTrue(BASE_FILES.containsAll(shared.bufferedFileIds()),
 				"only base-table/index pages may remain in the pool, found: " + shared.bufferedFileIds());
 		assertEquals(BASE_FILES, shared.catalogFileNames(),
