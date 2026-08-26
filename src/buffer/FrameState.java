@@ -49,6 +49,47 @@ public final class FrameState {
 	/** Largest representable version; the counter wraps to 0 past this. */
 	public static final long MAX_VERSION = VERSION_MASK;
 
+	private final AtomicLong word;
+
+	/** Creates a frame state at FREE, pin 0, unreferenced, version 0. */
+	public FrameState() {
+		this(State.FREE, 0L, false, 0L);
+	}
+
+	/** Creates a frame state with the given fields already set. */
+	public FrameState(State state, long pinCount, boolean referenced, long version) {
+		this.word = new AtomicLong(encode(state, pinCount, referenced, version));
+	}
+
+	// -------------------------------------------------------------- accessors
+
+	public State state() {
+		return decodeState(word.get());
+	}
+
+	/** Pin count as an unsigned value; widened to long because 32 bits do not fit an int. */
+	public long pinCount() {
+		return decodePinCount(word.get());
+	}
+
+	public boolean isReferenced() {
+		return decodeReferenced(word.get());
+	}
+
+	public long version() {
+		return decodeVersion(word.get());
+	}
+
+	/** The raw packed word, for callers that need a single consistent observation. */
+	public long snapshot() {
+		return word.get();
+	}
+
+	@Override
+	public String toString() {
+		return describe(word.get());
+	}
+
 	// ----------------------------------------------------- encode and decode
 
 	public static long encode(State state, long pinCount, boolean referenced, long version) {
