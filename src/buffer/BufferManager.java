@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -45,11 +44,11 @@ public class BufferManager {
 	// re-evict it while this thread drops globalLock to flush.
 	private final ClockReplacer clockReplacer;
 
-	// Global lock guarding all buffer pool state: pageTable (including its LRU
-	// order), bufferPool frames (pin counts, dirty flags, contents),
-	// freeFrameIndices, and the in-flight maps below. Page loads and dirty
-	// eviction flushes happen OUTSIDE the lock so one thread's disk I/O never
-	// blocks another thread's cache hits; force() keeps the coarse lock (rare).
+	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
+	// (pin counts, dirty flags, contents), freeFrameIndices, and the in-flight
+	// maps below. Page loads and dirty eviction flushes happen OUTSIDE the lock
+	// so one thread's disk I/O never blocks another thread's cache hits;
+	// force() keeps the coarse lock (rare).
 	private final ReentrantLock globalLock = new ReentrantLock();
 
 	// In-flight disk I/O markers, guarded by globalLock. A load marker means
@@ -67,7 +66,7 @@ public class BufferManager {
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
-		this.pageTable = new LinkedHashMap<>();
+		this.pageTable = new HashMap<>();
 		this.bufferPool = new Frame[bufferSize];
 		this.frameStates = new FrameState[bufferSize];
 		this.freeFrameIndices = new LinkedList<>();
@@ -128,7 +127,6 @@ public class BufferManager {
 			try {
 				// get from buffer pool
 				if (pageTable.containsKey(pageKey)) {
-					movePageToBottomOfLru(pageKey);
 					Frame frame = this.bufferPool[pageTable.get(pageKey)];
 					frame.pin();
 					return frame.page;
@@ -497,17 +495,10 @@ public class BufferManager {
 			frame.pin();
 		}
 
-		// add page to page table and automatically moves it to the bottom of the lru
+		// add page to page table
 		pageTable.put(pageKey, freeFrameIndex);
 
 		return page;
-	}
-
-	private void movePageToBottomOfLru(PageKey pageKey) {
-		// by removing and re-inserting in a linkedHashMap pageTable we position the
-		// page at the bottom of lru
-		int index = pageTable.remove(pageKey);
-		pageTable.put(pageKey, index);
 	}
 
 	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); }

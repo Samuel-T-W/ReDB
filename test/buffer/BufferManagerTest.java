@@ -152,7 +152,7 @@ public class BufferManagerTest {
 		Page page3 = bm.getPage(fileOneName, 3);
 
 		// page 1 is the frame the sweep reclaimed; 0 and 2 stayed put
-		assertArrayEquals(new int[]{0, 2, 3}, bm.listPageID());
+		assertArrayEquals(new int[]{0, 2, 3}, bufferedPageIds());
 		// and page 3 arrived whole: on disk every byte of it is 0xDD
 		byte[] expected = new byte[RawPage.MAX_PAGE_LEN];
 		Arrays.fill(expected, (byte) 0xDD);
@@ -170,7 +170,7 @@ public class BufferManagerTest {
 			bm.unpinPage(fileOneName, pageId);
 			assertEquals(1, bm.getPinCount(fileOneName, 0), "pinned page 0 was evicted");
 		}
-		assertArrayEquals(new int[]{0, 3}, bm.listPageID());
+		assertArrayEquals(new int[]{0, 3}, bufferedPageIds());
 	}
 
 	@Test
@@ -183,8 +183,63 @@ public class BufferManagerTest {
 
 		assertEquals("All frames are pinned, cannot evict", ex.getMessage());
 		// the failed sweep must leave the pool exactly as it found it
-		assertArrayEquals(new int[]{0, 1, 2}, bm.listPageID());
+		assertArrayEquals(new int[]{0, 1, 2}, bufferedPageIds());
 		assertEquals(3, bm.getTotalPinCount());
+	}
+
+	/**
+	 * Page ids held by the pool, sorted. The page table is a plain HashMap, so
+	 * {@link BufferManager#listPageID()} hands them back in no particular order.
+	 */
+	private int[] bufferedPageIds() {
+		int[] ids = bm.listPageID();
+		Arrays.sort(ids);
+		return ids;
+	}
+
+	@Test
+	void aCacheHitDoesNotProtectAPageTheWayLruWould() throws Exception {
+		// pool of 2 holding pages 0 and 1, both unpinned
+		bm = new BufferManager(2);
+		for (int pageId = 0; pageId < 2; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+		}
+
+		// hammer page 0: under LRU this would make page 1 the victim
+		for (int hit = 0; hit < 3; hit++) {
+			bm.getPage(fileOneName, 0);
+			bm.unpinPage(fileOneName, 0);
+		}
+		bm.getPage(fileOneName, 2);
+
+		// the hand still starts at frame 0, so the hottest page is the one that goes
+		assertArrayEquals(new int[]{1, 2}, bufferedPageIds());
+	}
+
+	@Test
+	void aPageTouchedSinceTheHandPassedSurvivesOneSweepAndGoesOnTheNext() throws Exception {
+		// pool of 3 holding pages 0, 1, 2, all unpinned; loading page 3 sweeps
+		// every reference bit clear and takes page 0
+		for (int pageId = 0; pageId <= 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+		}
+		assertArrayEquals(new int[]{1, 2, 3}, bufferedPageIds());
+
+		// touch page 1 only: the hit re-sets its reference bit via tryPin
+		bm.getPage(fileOneName, 1);
+		bm.unpinPage(fileOneName, 1);
+
+		// next sweep spends a pass giving page 1 its second chance and takes
+		// untouched page 2 instead
+		bm.getPage(fileOneName, 0);
+		bm.unpinPage(fileOneName, 0);
+		assertArrayEquals(new int[]{0, 1, 3}, bufferedPageIds());
+
+		// page 1 is now unreferenced, so the following sweep does take it
+		bm.getPage(fileOneName, 2);
+		assertArrayEquals(new int[]{0, 2, 3}, bufferedPageIds());
 	}
 
 	@Test
@@ -223,7 +278,7 @@ public class BufferManagerTest {
 		}
 
 		// Assert page B is evicted
-		int[] ids = bm.listPageID();
+		int[] ids = bufferedPageIds();
 		int[] expected = new int[]{0, 2};
 		for (int i = 0; i < ids.length; i++) {
 			System.out.println(ids[0]);
