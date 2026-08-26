@@ -201,10 +201,49 @@ public class BufferManagerConcurrencyTest {
 		bm.unpinPage(fileName, 0);
 	}
 
+	/** A manager whose disk read can be stalled on demand. */
+	private static final class ControlledLoadManager extends BufferManager {
+		final CountDownLatch loadStarted = new CountDownLatch(1);
+		final CountDownLatch releaseLoad = new CountDownLatch(1);
+
+		ControlledLoadManager(int bufferSize) { super(bufferSize); }
+
+		@Override
+		RawPage readPageFromDisk(PageKey pageKey) throws IOException {
+			loadStarted.countDown();
+			try {
+				releaseLoad.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			return super.readPageFromDisk(pageKey);
+		}
+	}
+
+	@Test
+	public void testReaderOfMidLoadPageWaitsInsteadOfIssuingASecondRead() throws Exception {
+		String fileName = createFingerprintFile(1);
+		ControlledLoadManager bm = new ControlledLoadManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		Thread loader = startGet(bm, fileName, 0, null);
+		assertTrue(bm.loadStarted.await(5, TimeUnit.SECONDS), "load must start");
+
+		byte[] seen = new byte[1];
+		Thread reader = startGet(bm, fileName, 0, seen);
+		reader.join(200);
+		assertTrue(reader.isAlive(), "reader must wait for the LOADING frame");
+		bm.releaseLoad.countDown();
+		reader.join(5000);
+		loader.join(5000);
+		assertEquals((byte) 0, seen[0]);
+		assertEquals(1, bm.getReadIOCount(), "still a single disk read after both return");
+	}
+
 	@Test
 	public void testColdPageRaceIssuesSingleDiskRead() throws Exception {
 		// Goal: N threads missing the same page must produce exactly ONE disk
-		// read; the in-flight load marker makes the losers wait and retry.
+		// read; the LOADING frame in the page table makes the losers wait.
 		final int threads = 16;
 		String fileName = createFingerprintFile(2);
 		BufferManager bm = new BufferManager(4);
@@ -269,8 +308,7 @@ public class BufferManagerConcurrencyTest {
 	@Test
 	public void testAllFramesPinnedThrowsForEveryRacingThread() throws Exception {
 		// Goal: when no frame can be reclaimed, every caller gets the eviction
-		// failure. A waiter on a failed in-flight load retries and surfaces the
-		// error from its own attempt rather than hanging.
+		// failure rather than hanging on a load that will never install.
 		final int threads = 4;
 		String fileName = createFingerprintFile(4);
 		BufferManager bm = new BufferManager(3);
