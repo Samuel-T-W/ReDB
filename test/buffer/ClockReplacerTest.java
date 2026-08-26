@@ -174,4 +174,104 @@ public class ClockReplacerTest {
 		assertEquals(OptionalInt.of(2), clock.findVictim());
 		assertEquals(3, clock.hand(), "the hand rests just past the frame it claimed");
 	}
+
+	// ----------------------------------------------------------- concurrency
+
+	@Test
+	public void concurrentSweepersNeverReceiveTheSameFrameTwice() throws Exception {
+		final int poolSize = 64;
+		final int evictableCount = 16;
+		final int threads = 32;
+
+		for (int round = 0; round < 20; round++) {
+			FrameState[] frames = new FrameState[poolSize];
+			for (int i = 0; i < poolSize; i++) {
+				// Scatter the evictable frames through a pool of pinned ones.
+				frames[i] = (i % (poolSize / evictableCount) == 0) ? evictable() : pinned(1L);
+			}
+			ClockReplacer clock = new ClockReplacer(frames);
+
+			CountDownLatch ready = new CountDownLatch(threads);
+			CountDownLatch go = new CountDownLatch(1);
+			ExecutorService pool = Executors.newFixedThreadPool(threads);
+			List<Integer> claimed = new ArrayList<>();
+			try {
+				List<Future<OptionalInt>> futures = new ArrayList<>();
+				for (int t = 0; t < threads; t++) {
+					futures.add(pool.submit(() -> {
+						ready.countDown();
+						go.await();
+						return clock.findVictim();
+					}));
+				}
+				assertTrue(ready.await(30, TimeUnit.SECONDS));
+				go.countDown();
+				for (Future<OptionalInt> f : futures) {
+					OptionalInt victim = f.get(60, TimeUnit.SECONDS);
+					if (victim.isPresent()) {
+						claimed.add(victim.getAsInt());
+					}
+				}
+			} finally {
+				pool.shutdownNow();
+			}
+
+			Set<Integer> distinct = new HashSet<>(claimed);
+			assertEquals(claimed.size(), distinct.size(),
+					"a frame was handed to more than one sweeper: " + claimed);
+			assertTrue(claimed.size() <= evictableCount,
+					"more victims than there were evictable frames: " + claimed.size());
+			for (int index : claimed) {
+				assertEquals(State.EVICTING, frames[index].state());
+			}
+			for (int i = 0; i < poolSize; i++) {
+				if (!distinct.contains(i)) {
+					assertEquals(State.VALID, frames[i].state(),
+							"frame " + i + " changed state without being handed to anyone");
+				}
+			}
+		}
+	}
+
+	@Test
+	public void concurrentSweepersDrainAPoolWithoutDoubleHandout() throws Exception {
+		final int poolSize = 32;
+		final int threads = 8;
+
+		FrameState[] frames = new FrameState[poolSize];
+		for (int i = 0; i < poolSize; i++) {
+			frames[i] = evictable();
+		}
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		CountDownLatch go = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(threads);
+		List<Integer> claimed = new ArrayList<>();
+		try {
+			List<Future<List<Integer>>> futures = new ArrayList<>();
+			for (int t = 0; t < threads; t++) {
+				futures.add(pool.submit(() -> {
+					go.await();
+					List<Integer> mine = new ArrayList<>();
+					for (int i = 0; i < poolSize; i++) {
+						OptionalInt victim = clock.findVictim();
+						if (victim.isEmpty()) {
+							break;
+						}
+						mine.add(victim.getAsInt());
+					}
+					return mine;
+				}));
+			}
+			go.countDown();
+			for (Future<List<Integer>> f : futures) {
+				claimed.addAll(f.get(60, TimeUnit.SECONDS));
+			}
+		} finally {
+			pool.shutdownNow();
+		}
+
+		assertEquals(claimed.size(), new HashSet<>(claimed).size(), "double handout: " + claimed);
+		assertTrue(claimed.size() <= poolSize);
+	}
 }
