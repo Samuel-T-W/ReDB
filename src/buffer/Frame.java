@@ -27,7 +27,7 @@ public class Frame {
 	 * claiming the frame out of FREE, which is what makes the fill exclusive.
 	 */
 	public void markValid() {
-		if (!state.finishLoad()) {
+		if (!state.finishLoadAndPin()) {
 			throw new IllegalStateException("frame " + frameIndex + " is not claimed for filling: " + describeState());
 		}
 	}

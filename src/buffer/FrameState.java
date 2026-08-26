@@ -145,6 +145,18 @@ public final class FrameState {
 		return transition(State.LOADING, State.VALID);
 	}
 
+	public boolean finishLoadAndPin() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.LOADING) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withReferenced(withPinCount(withState(cur, State.VALID), 1L), true))) {
+				return true;
+			}
+		}
+	}
+
 	/** EVICTING to FLUSHING, for a victim whose page must be written back. */
 	public boolean beginFlush() {
 		return transition(State.EVICTING, State.FLUSHING);
