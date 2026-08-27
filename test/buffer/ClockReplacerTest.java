@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import buffer.FrameState.State;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -177,17 +177,31 @@ public class ClockReplacerTest {
 
 	// ----------------------------------------------------------- concurrency
 
+	/**
+	 * A sweep is budgeted at two passes over the pool, so a sweeper that comes
+	 * back empty is asserting "nothing here is evictable". These tests therefore
+	 * pin down both halves of the contract: no frame reaches two callers, and
+	 * every evictable frame reaches one. The second half is what makes them
+	 * fail against a {@code findVictim()} stubbed to return empty — without it
+	 * an all-empty run satisfies every uniqueness assertion trivially.
+	 */
 	@Test
 	public void concurrentSweepersNeverReceiveTheSameFrameTwice() throws Exception {
 		final int poolSize = 64;
 		final int evictableCount = 16;
 		final int threads = 32;
+		final int stride = poolSize / evictableCount;
 
 		for (int round = 0; round < 20; round++) {
 			FrameState[] frames = new FrameState[poolSize];
+			Set<Integer> evictableIndexes = new TreeSet<>();
 			for (int i = 0; i < poolSize; i++) {
 				// Scatter the evictable frames through a pool of pinned ones.
-				frames[i] = (i % (poolSize / evictableCount) == 0) ? evictable() : pinned(1L);
+				boolean free = i % stride == 0;
+				frames[i] = free ? evictable() : pinned(1L);
+				if (free) {
+					evictableIndexes.add(i);
+				}
 			}
 			ClockReplacer clock = new ClockReplacer(frames);
 
@@ -195,6 +209,7 @@ public class ClockReplacerTest {
 			CountDownLatch go = new CountDownLatch(1);
 			ExecutorService pool = Executors.newFixedThreadPool(threads);
 			List<Integer> claimed = new ArrayList<>();
+			int emptyHanded = 0;
 			try {
 				List<Future<OptionalInt>> futures = new ArrayList<>();
 				for (int t = 0; t < threads; t++) {
@@ -210,18 +225,26 @@ public class ClockReplacerTest {
 					OptionalInt victim = f.get(60, TimeUnit.SECONDS);
 					if (victim.isPresent()) {
 						claimed.add(victim.getAsInt());
+					} else {
+						emptyHanded++;
 					}
 				}
 			} finally {
 				pool.shutdownNow();
 			}
 
-			Set<Integer> distinct = new HashSet<>(claimed);
+			Set<Integer> distinct = new TreeSet<>(claimed);
 			assertEquals(claimed.size(), distinct.size(),
 					"a frame was handed to more than one sweeper: " + claimed);
-			assertTrue(claimed.size() <= evictableCount,
-					"more victims than there were evictable frames: " + claimed.size());
-			for (int index : claimed) {
+			// Every sweeper covers the whole pool twice, so a frame can only go
+			// unclaimed if someone else took it first. Anything left over means a
+			// sweeper reported "nothing evictable" over a pool that still had
+			// cold frames in it.
+			assertEquals(evictableIndexes, distinct,
+					"round " + round + ": " + emptyHanded + " of " + threads
+							+ " sweepers came back empty, yet these evictable frames were never"
+							+ " handed out: " + missing(evictableIndexes, distinct));
+			for (int index : distinct) {
 				assertEquals(State.EVICTING, frames[index].state());
 			}
 			for (int i = 0; i < poolSize; i++) {
@@ -271,7 +294,26 @@ public class ClockReplacerTest {
 			pool.shutdownNow();
 		}
 
-		assertEquals(claimed.size(), new HashSet<>(claimed).size(), "double handout: " + claimed);
-		assertTrue(claimed.size() <= poolSize);
+		Set<Integer> distinct = new TreeSet<>(claimed);
+		assertEquals(claimed.size(), distinct.size(), "double handout: " + claimed);
+		// Nothing here is pinned or referenced, so the only reason to stop is an
+		// empty pool. A sweeper that quits early leaves evictable frames behind.
+		Set<Integer> everyFrame = new TreeSet<>();
+		for (int i = 0; i < poolSize; i++) {
+			everyFrame.add(i);
+		}
+		assertEquals(everyFrame, distinct,
+				"the sweepers gave up with these frames still evictable: "
+						+ missing(everyFrame, distinct));
+		for (FrameState frame : frames) {
+			assertEquals(State.EVICTING, frame.state());
+		}
+	}
+
+	/** The elements of {@code expected} that {@code actual} never produced. */
+	private static Set<Integer> missing(Set<Integer> expected, Set<Integer> actual) {
+		Set<Integer> gap = new TreeSet<>(expected);
+		gap.removeAll(actual);
+		return gap;
 	}
 }
