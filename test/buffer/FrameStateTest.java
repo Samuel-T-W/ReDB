@@ -53,7 +53,7 @@ public class FrameStateTest {
 		fs.unpin();
 		assertEquals(0L, fs.pinCount());
 
-		assertTrue(fs.clearReferenced());
+		assertTrue(fs.clearReferenced(fs.snapshot()));
 		assertFalse(fs.isReferenced());
 
 		assertTrue(fs.tryClaimForEviction());
@@ -174,9 +174,25 @@ public class FrameStateTest {
 	@Test
 	public void clearReferencedRejectedWhenNotValidOrNotReferenced() {
 		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
-			assertRejectedAndUnchanged(new FrameState(s, 0L, true, 0L), FrameState::clearReferenced);
+			assertRejectedAndUnchanged(new FrameState(s, 0L, true, 0L), fs -> fs.clearReferenced(fs.snapshot()));
 		}
-		assertRejectedAndUnchanged(new FrameState(State.VALID, 0L, false, 0L), FrameState::clearReferenced);
+		assertRejectedAndUnchanged(new FrameState(State.VALID, 0L, false, 0L),
+				fs -> fs.clearReferenced(fs.snapshot()));
+	}
+
+	@Test
+	public void clearReferencedRefusesAReferenceNewerThanTheSnapshot() {
+		FrameState fs = new FrameState(State.VALID, 0L, true, 0L);
+		long observed = fs.snapshot();
+
+		// A reader reaches the frame after the sweeper decided to spend its
+		// second chance; tryPin() re-arms the reference bit as it pins.
+		assertTrue(fs.tryPin());
+
+		assertFalse(fs.clearReferenced(observed),
+				"the reference bit is newer than the observation, so it is not the sweeper's to spend");
+		assertTrue(fs.isReferenced(), "the arriving reader must keep the second chance it just earned");
+		assertEquals(1L, fs.pinCount(), "a refused clear must leave the rest of the word alone");
 	}
 
 	// --------------------------------------------------------- encode / decode
@@ -382,7 +398,7 @@ public class FrameStateTest {
 					start.await();
 					boolean claimed = false;
 					for (int i = 0; i < 200 && !claimed; i++) {
-						fs.clearReferenced();
+						fs.clearReferenced(fs.snapshot());
 						claimed = fs.tryClaimForEviction();
 					}
 					return claimed;

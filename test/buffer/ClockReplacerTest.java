@@ -14,6 +14,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -308,6 +310,82 @@ public class ClockReplacerTest {
 		for (FrameState frame : frames) {
 			assertEquals(State.EVICTING, frame.state());
 		}
+	}
+
+	/**
+	 * findVictim() skips any frame it observes as pinned, so it only ever spends
+	 * a second chance on a frame it saw at pin 0 — and tryPin() raises the
+	 * reference bit in the same CAS that raises the pin. "Pinned but
+	 * unreferenced" is therefore a state the sweeper must never be able to
+	 * produce. Observing it means a pin landed between the sweeper's snapshot
+	 * and its clearReferenced(), and the sweeper cleared a reference bit newer
+	 * than the observation it acted on: the page loses the second chance it had
+	 * just earned and falls to the very next pass of the hand.
+	 */
+	@Test
+	public void secondChanceNeverSpendsAReferenceSetAfterTheSnapshot() throws Exception {
+		final int poolSize = 8;
+		final int sweepers = 4;
+		final int pinners = 4;
+		final int iterations = 5_000;
+
+		FrameState[] frames = new FrameState[poolSize];
+		for (int i = 0; i < poolSize; i++) {
+			frames[i] = referenced();
+		}
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		AtomicBoolean stop = new AtomicBoolean();
+		AtomicLong pinsTaken = new AtomicLong();
+		AtomicLong referencesLost = new AtomicLong();
+		CountDownLatch done = new CountDownLatch(pinners);
+		List<Thread> threads = new ArrayList<>();
+
+		for (int s = 0; s < sweepers; s++) {
+			threads.add(new Thread(() -> {
+				while (!stop.get()) {
+					// Hand every claim straight back, so the pool never drains
+					// and the sweepers keep passing over live frames.
+					clock.findVictim().ifPresent(index -> frames[index].abortEvict());
+				}
+			}));
+		}
+		for (int p = 0; p < pinners; p++) {
+			final int offset = p;
+			threads.add(new Thread(() -> {
+				try {
+					for (int i = 0; i < iterations; i++) {
+						for (int f = 0; f < poolSize; f++) {
+							FrameState frame = frames[(offset + f) % poolSize];
+							if (frame.tryPin()) {
+								pinsTaken.incrementAndGet();
+								if (!frame.isReferenced()) {
+									referencesLost.incrementAndGet();
+								}
+								frame.unpin();
+							}
+						}
+					}
+				} finally {
+					done.countDown();
+				}
+			}));
+		}
+
+		for (Thread t : threads) {
+			t.start();
+		}
+		assertTrue(done.await(120, TimeUnit.SECONDS), "the pinners never finished");
+		stop.set(true);
+		for (Thread t : threads) {
+			t.join(60_000);
+		}
+
+		assertTrue(pinsTaken.get() > 0, "no pin ever succeeded, so this run proved nothing");
+		assertEquals(0L, referencesLost.get(),
+				referencesLost + " of " + pinsTaken + " successful pins found their own"
+						+ " reference bit already cleared: the sweeper spent a second chance"
+						+ " it never observed");
 	}
 
 	/** The elements of {@code expected} that {@code actual} never produced. */

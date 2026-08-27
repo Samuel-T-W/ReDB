@@ -62,8 +62,10 @@ public final class ClockReplacer {
 			}
 			if (FrameState.decodeReferenced(word)) {
 				// Second chance: cost it a sweep rather than evicting a frame
-				// that was touched since the hand last passed.
-				frame.clearReferenced();
+				// that was touched since the hand last passed. Guarded by the
+				// snapshot above, so a reader that pinned the frame in the gap
+				// keeps the reference bit it just set.
+				frame.clearReferenced(word);
 				continue;
 			}
 			if (frame.tryClaimForEviction()) {

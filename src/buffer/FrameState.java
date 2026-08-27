@@ -120,17 +120,29 @@ public final class FrameState {
 		}
 	}
 
-	/** Gives a referenced VALID frame its second chance by clearing the bit. */
-	public boolean clearReferenced() {
-		for (;;) {
-			long cur = word.get();
-			if (decodeState(cur) != State.VALID || !decodeReferenced(cur)) {
-				return false;
-			}
-			if (word.compareAndSet(cur, withReferenced(cur, false))) {
-				return true;
-			}
+	/**
+	 * Spends the second chance the caller observed: clears the reference bit,
+	 * but only while the word still reads exactly {@code expected}.
+	 *
+	 * <p>Deliberately a single compare-and-swap rather than a retry loop. A loop
+	 * that re-read the word would clear whatever reference bit it found, and
+	 * {@link #tryPin()} raises that bit in the same CAS that raises the pin — so
+	 * a reader arriving between the caller's observation and this call would
+	 * have its brand-new second chance spent on its behalf, and the page it just
+	 * touched would fall to the next pass of the clock hand. A reference newer
+	 * than {@code expected} belongs to that reader, not to the sweeper, so the
+	 * CAS fails and the bit stands.
+	 *
+	 * @param expected the word the caller decided on, from {@link #snapshot()}
+	 * @return true if this call cleared the bit it observed; false if the frame
+	 *         was not a referenced VALID frame at {@code expected}, or if the
+	 *         word has moved at all since
+	 */
+	public boolean clearReferenced(long expected) {
+		if (decodeState(expected) != State.VALID || !decodeReferenced(expected)) {
+			return false;
 		}
+		return word.compareAndSet(expected, withReferenced(expected, false));
 	}
 
 	// ------------------------------------------------------------ transitions

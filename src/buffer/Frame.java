@@ -65,7 +65,14 @@ public class Frame {
 		// EVICTING and exclusively owned by this caller, so it only needs
 		// finishing. An unclaimed VALID frame must be claimed here first.
 		if (current == FrameState.State.VALID) {
-			state.clearReferenced();
+			// Unlike the clock sweeper, this caller is not spending a second
+			// chance it observed — it is forcing the frame down regardless of
+			// who touched it, so it retries over whatever the word currently
+			// reads. That retry used to live inside clearReferenced(); it is
+			// spelled out here now that the sweeper needs the guarded form.
+			for (long snap = state.snapshot(); FrameState.decodeReferenced(snap); snap = state.snapshot()) {
+				state.clearReferenced(snap);
+			}
 			if (!state.tryClaimForEviction()) {
 				throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
 			}
