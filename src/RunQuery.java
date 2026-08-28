@@ -31,29 +31,25 @@ public class RunQuery {
     static final String PEOPLE_DB   = "people.db";
     static final String TITLE_IDX   = "title.idx";
     static final String QUERY_RESULTS = "query_results.csv";
-    static final int BTREE_DEGREE = 50;
 
     static final Map<String, Integer> MOVIES_SCHEMA;
     static final Map<String, Integer> WORKEDON_SCHEMA;
     static final Map<String, Integer> PEOPLE_SCHEMA;
 
+    // Must stay identical to the widths PreProcessor wrote the heap files with;
+    // a mismatch silently misreads every record.
     static {
-        Map<String, Integer> movies = new LinkedHashMap<>();
-        movies.put("movieId", 9);
-        movies.put("title",  30);
-        MOVIES_SCHEMA = Collections.unmodifiableMap(movies);
-
-        Map<String, Integer> workedon = new LinkedHashMap<>();
-        workedon.put("movieId",  9);
-        workedon.put("personId", 10);
-        workedon.put("category", 20);
-        WORKEDON_SCHEMA = Collections.unmodifiableMap(workedon);
-
-        Map<String, Integer> people = new LinkedHashMap<>();
-        people.put("personId", 10);
-        people.put("name",    105);
-        PEOPLE_SCHEMA = Collections.unmodifiableMap(people);
+        MOVIES_SCHEMA = Collections.unmodifiableMap(new LinkedHashMap<>(PreProcessor.MOVIES_SCHEMA));
+        WORKEDON_SCHEMA = Collections.unmodifiableMap(new LinkedHashMap<>(PreProcessor.WORKEDON_SCHEMA));
+        PEOPLE_SCHEMA = Collections.unmodifiableMap(new LinkedHashMap<>(PreProcessor.PEOPLE_SCHEMA));
     }
+
+    private static final int MOVIE_ID_LEN = MOVIES_SCHEMA.get("movieId");
+    private static final int TITLE_LEN = MOVIES_SCHEMA.get("title");
+    private static final int PERSON_ID_LEN = PEOPLE_SCHEMA.get("personId");
+    private static final int NAME_LEN = PEOPLE_SCHEMA.get("name");
+
+    static final int BTREE_DEGREE = BTreeManager.maxDegree(TITLE_LEN);
 
     public static long run(
             String startRange,
@@ -94,8 +90,8 @@ public class RunQuery {
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------
             Map<String, Integer> wkProj_ = new LinkedHashMap<>();
-            wkProj_.put("movieId",  9);
-            wkProj_.put("personId", 10);
+            wkProj_.put("movieId",  MOVIE_ID_LEN);
+            wkProj_.put("personId", PERSON_ID_LEN);
             Map<String, Integer> wkProjSchema = Collections.unmodifiableMap(wkProj_);
             String workedonTmp = query.tempFileId("workedon-proj", ".db");
             bm.register(new TableEntry(workedonTmp, wkProjSchema));
@@ -105,8 +101,8 @@ public class RunQuery {
             Scan peopleScan   = new Scan(bm, PEOPLE_DB,    PEOPLE_SCHEMA);
 
             // ---- Movies access: index range scan OR scan + selection --------
-            byte[] startBytes = RecordUtils.toFixedBytes(startRange, 30);
-            byte[] endBytes   = RecordUtils.toFixedBytes(endRange,   30);
+            byte[] startBytes = RecordUtils.toFixedBytes(startRange, TITLE_LEN);
+            byte[] endBytes   = RecordUtils.toFixedBytes(endRange,   TITLE_LEN);
             Operator movieSel;
             if (useIndex) {
                 BTreeManager titleIdx = BTreeManager.openExisting(
@@ -132,9 +128,9 @@ public class RunQuery {
 
             // ---- Join 1: Movies ⋈ WorkedOn on movieId -----------------------
             Map<String, Integer> j1_ = new LinkedHashMap<>();
-            j1_.put("movieId",  9);
-            j1_.put("title",   30);
-            j1_.put("personId", 10);
+            j1_.put("movieId",  MOVIE_ID_LEN);
+            j1_.put("title",    TITLE_LEN);
+            j1_.put("personId", PERSON_ID_LEN);
             Map<String, Integer> j1Schema = Collections.unmodifiableMap(j1_);
 
             Join join1 = new Join(
@@ -145,10 +141,10 @@ public class RunQuery {
 
             // ---- Join 2: Join1 ⋈ People on personId -------------------------
             Map<String, Integer> j2_ = new LinkedHashMap<>();
-            j2_.put("movieId",  9);
-            j2_.put("title",   30);
-            j2_.put("personId", 10);
-            j2_.put("name",   105);
+            j2_.put("movieId",  MOVIE_ID_LEN);
+            j2_.put("title",    TITLE_LEN);
+            j2_.put("personId", PERSON_ID_LEN);
+            j2_.put("name",     NAME_LEN);
             Map<String, Integer> j2Schema = Collections.unmodifiableMap(j2_);
 
             Join join2 = new Join(
@@ -159,8 +155,8 @@ public class RunQuery {
 
             // ---- Final pipelined projection: → {title, name} ----------------
             Map<String, Integer> out_ = new LinkedHashMap<>();
-            out_.put("title", 30);
-            out_.put("name", 105);
+            out_.put("title", TITLE_LEN);
+            out_.put("name", NAME_LEN);
             Map<String, Integer> outSchema = Collections.unmodifiableMap(out_);
 
             Project finalProj = new Project(join2, outSchema);
@@ -177,8 +173,8 @@ public class RunQuery {
                         query.outputPath(), StandardCharsets.UTF_8)) {
                     GenericRecord result;
                     while ((result = finalProj.next()) != null) {
-                        String title = new String(result.getFieldBytes("title")).trim();
-                        String name  = new String(result.getFieldBytes("name")).trim();
+                        String title = RecordUtils.fromFixedBytes(result.getFieldBytes("title"));
+                        String name = RecordUtils.fromFixedBytes(result.getFieldBytes("name"));
                         writer.write(title);
                         writer.write(',');
                         writer.write(name);

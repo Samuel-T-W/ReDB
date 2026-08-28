@@ -69,6 +69,17 @@ public class LeafPage implements IndexPage {
 	/** Sentinel: no next leaf (this is the last leaf in the chain). */
 	public static final int NO_NEXT = -1;
 
+	/**
+	 * Largest degree whose slots still fit in one page for the given key size,
+	 * mirroring the bound enforced by the constructors.
+	 *
+	 * @return Max slots+1 per leaf page, or 0 if even degree 1 will not fit.
+	 */
+	public static int maxDegree(int keySize) {
+		int usable = PAGE_SIZE - Integer.BYTES - HEADER_SIZE;
+		return usable / (keySize + RID_SIZE);
+	}
+
 	// -----------------------------------------------------------------------
 	// Fields
 	// -----------------------------------------------------------------------
