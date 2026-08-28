@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -443,6 +444,51 @@ public class BufferManagerConcurrencyTest {
 		// startGet leaves the reader's pin outstanding; releasing it here also
 		// checks the pin landed on the frame that really does hold page 0.
 		bm.unpinPage(fileName, 0);
+		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+	}
+
+	@Test
+	public void testNoPageIsEverHeldByTwoFramesAtOnce() throws Exception {
+		// Two frames holding one page means two divergent copies: a write
+		// through one is invisible to a reader holding the other, and whichever
+		// is evicted second overwrites the other's bytes on disk. The page table
+		// cannot represent that state, so this reads the frames themselves.
+		final int poolSize = 6;
+		final int numPages = 40;
+		final int threads = 4;
+		final int iterations = 3_000;
+
+		String fileName = createFingerprintFile(numPages);
+		BufferManager bm = new BufferManager(poolSize);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		List<Runnable> tasks = new ArrayList<>();
+		for (int t = 0; t < threads; t++) {
+			final long seed = 101L + t;
+			tasks.add(() -> {
+				Random random = new Random(seed);
+				try {
+					for (int i = 0; i < iterations; i++) {
+						// Cluster the reads so several threads miss on the same
+						// cold page at once: that race is what decides which
+						// loader installs the mapping.
+						int pageId = random.nextInt(8) + 8 * random.nextInt(numPages / 8);
+						bm.getPage(fileName, pageId);
+						if (random.nextInt(4) == 0) {
+							bm.markDirty(fileName, pageId);
+						}
+						bm.unpinPage(fileName, pageId);
+						assertEquals(Set.of(), bm.duplicatelyHeldPages(),
+								"a page was resident in two frames at once");
+					}
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+		}
+		runAllAtOnce(tasks);
+
+		assertEquals(Set.of(), bm.duplicatelyHeldPages());
 		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
 	}
 

@@ -50,6 +50,11 @@ public class BufferManager {
 	// bytes. Signalled when the frame settles (VALID or gone).
 	private final Condition flushSettled = globalLock.newCondition();
 
+	// A load that keeps losing arbitration is waiting on other loaders, not
+	// spinning, so this only has to be larger than any real pile-up. It exists
+	// so a livelock surfaces as a failure rather than a hang.
+	private static final int MAX_LOAD_ROUNDS = 1024;
+
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private final LongAdder readIOCount = new LongAdder();
 	private final LongAdder writeIOCount = new LongAdder();
@@ -111,6 +116,7 @@ public class BufferManager {
 		}
 		globalLock.lock();
 		try {
+			int rounds = 0;
 			for (;;) {
 				Integer frameIndex = pageTable.get(pageKey);
 				if (frameIndex != null) {
@@ -123,12 +129,12 @@ public class BufferManager {
 					continue;
 				}
 
-				int claimed = claimFrame();
-				if (pageTable.containsKey(pageKey)) {
-					// claimFrame may drop the lock to flush; another loader won
-					releaseClaim(claimed, null);
-					continue;
+				if (++rounds > MAX_LOAD_ROUNDS) {
+					throw new IllegalStateException(
+							"gave up loading " + pageKey + " after " + MAX_LOAD_ROUNDS + " rounds");
 				}
+
+				int claimed = claimFrame();
 				try {
 					if (bufferPool[claimed] == null) {
 						bufferPool[claimed] = new Frame(claimed, frameStates[claimed]);
@@ -138,10 +144,26 @@ public class BufferManager {
 						throw new IllegalStateException("Expected Free Frame object");
 					}
 					frame.pageKey = pageKey;
-					pageTable.put(pageKey, claimed);
 				} catch (RuntimeException e) {
 					releaseClaim(claimed, e);
 					throw e;
+				}
+
+				// The single arbiter for this page. Exactly one frame index can
+				// be mapped to a key at a time — this only ever installs into an
+				// empty slot, and eviction only ever retires the mapping still
+				// pointing at the frame it evicted — so two frames holding one
+				// page is not a state the pool can reach.
+				Integer winner = pageTable.putIfAbsent(pageKey, claimed);
+				if (winner != null) {
+					// Another loader got there first, possibly while claimFrame
+					// dropped the lock to flush. Give the frame back and wait for
+					// their load. Looping straight back to claimFrame instead
+					// would evict a fresh victim, and could pay a real disk write
+					// on every lost round.
+					releaseClaim(claimed, null);
+					awaitFlushSettled();
+					continue;
 				}
 
 				Page page = null;
@@ -155,7 +177,7 @@ public class BufferManager {
 					globalLock.lock();
 				}
 				if (loadError != null) {
-					pageTable.remove(pageKey);
+					pageTable.remove(pageKey, claimed);
 					releaseClaim(claimed, loadError);
 					flushSettled.signalAll();
 					if (loadError instanceof IOException ioe)
@@ -169,7 +191,7 @@ public class BufferManager {
 					frame.pin();
 					return page;
 				} catch (RuntimeException e) {
-					pageTable.remove(pageKey);
+					pageTable.remove(pageKey, claimed);
 					releaseClaim(claimed, e);
 					throw e;
 				} finally {
@@ -683,6 +705,30 @@ public class BufferManager {
 		} finally {
 			globalLock.unlock();
 		}
+	}
+
+	/**
+	 * Every page key held by more than one frame, which must always be empty:
+	 * two frames holding one page means two divergent copies of it, and a write
+	 * through one is invisible to a reader holding the other.
+	 *
+	 * <p>Package-private, for tests. Reads the frames rather than the page
+	 * table, so it sees a duplicate the table itself cannot represent.
+	 */
+	Set<PageKey> duplicatelyHeldPages() {
+		Set<PageKey> seen = new HashSet<>();
+		Set<PageKey> duplicates = new HashSet<>();
+		for (int i = 0; i < bufferPool.length; i++) {
+			Frame frame = bufferPool[i];
+			if (frame == null || !frame.hasPage()) {
+				continue;
+			}
+			PageKey key = frame.pageKey;
+			if (key != null && !seen.add(key)) {
+				duplicates.add(key);
+			}
+		}
+		return duplicates;
 	}
 
 	// package-private, for concurrency tests: frames whose state word says FREE.
