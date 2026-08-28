@@ -65,16 +65,28 @@ public class Frame {
 			throw new IllegalStateException(
 					"frame " + frameIndex + " is not this caller's to clear: " + describeState());
 		}
+		if (!tryClaimForClear()) {
+			throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
+		}
+		clearOwned();
+	}
+
+	/**
+	 * Takes the eviction claim so this caller may empty the frame, reporting
+	 * whether it won rather than throwing.
+	 *
+	 * <p>For callers that have somewhere else to go when the frame turns out to
+	 * be someone else's — readers pin without the global lock, so a frame that
+	 * read as VALID a moment ago may be pinned by the time the claim is tried.
+	 */
+	public boolean tryClaimForClear() {
 		// Force the reference bit down so the claim's precondition can be met.
 		// Unlike the clock sweeper this caller is not spending a second chance
 		// it observed, so it retries over whatever the word currently reads.
 		for (long snap = state.snapshot(); FrameState.decodeReferenced(snap); snap = state.snapshot()) {
 			state.clearReferenced(snap);
 		}
-		if (!state.tryClaimForEviction()) {
-			throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
-		}
-		clearOwned();
+		return state.tryClaimForEviction();
 	}
 
 	/**

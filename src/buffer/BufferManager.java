@@ -469,9 +469,18 @@ public class BufferManager {
 						inFlight = true;
 						continue;
 					}
+					// Own the frame before unmapping it. Readers pin without
+					// globalLock, so the pin count checked a moment ago is not a
+					// promise, and only winning the claim excludes them. Losing
+					// it means a reader got in; leave the mapping alone and come
+					// back, rather than retiring an entry for a frame this call
+					// is not entitled to empty.
+					if (!frame.tryClaimForClear()) {
+						inFlight = true;
+						continue;
+					}
 					iter.remove();
-					// clear() drives the word to FREE: all a later claim needs
-					frame.clear();
+					frame.clearOwned();
 				}
 				if (inFlight) {
 					awaitFlushSettled();
@@ -747,19 +756,29 @@ public class BufferManager {
 	 * table, so it sees a duplicate the table itself cannot represent.
 	 */
 	Set<PageKey> duplicatelyHeldPages() {
-		Set<PageKey> seen = new HashSet<>();
-		Set<PageKey> duplicates = new HashSet<>();
-		for (int i = 0; i < bufferPool.length; i++) {
-			Frame frame = bufferPool[i];
-			if (frame == null || !frame.hasPage()) {
-				continue;
+		// Under globalLock, because the scan has to be atomic with respect to
+		// installs and evictions. Reading the frames one at a time otherwise
+		// reports a page that merely moved from one frame to another during the
+		// scan — seen in the frame it left, then again in the frame it arrived
+		// in — which is a healthy pool, not a duplicate.
+		globalLock.lock();
+		try {
+			Set<PageKey> seen = new HashSet<>();
+			Set<PageKey> duplicates = new HashSet<>();
+			for (int i = 0; i < bufferPool.length; i++) {
+				Frame frame = bufferPool[i];
+				if (frame == null || !frame.hasPage()) {
+					continue;
+				}
+				PageKey key = frame.pageKey;
+				if (key != null && !seen.add(key)) {
+					duplicates.add(key);
+				}
 			}
-			PageKey key = frame.pageKey;
-			if (key != null && !seen.add(key)) {
-				duplicates.add(key);
-			}
+			return duplicates;
+		} finally {
+			globalLock.unlock();
 		}
-		return duplicates;
 	}
 
 	// package-private, for concurrency tests: frames whose state word says FREE.
