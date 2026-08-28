@@ -620,6 +620,16 @@ public class End2EndTest {
 			System.out.println("READ DATABASE FAIL!");
 		}
 
+		// Take the page back before touching it again: the unpin above gave it
+		// up, and an unpinned frame may be evicted and refilled at any moment,
+		// which would land these inserts on whatever page took its place.
+		try {
+			bm.getPage(MOVIES_DB, page.getPid());
+		} catch (IOException e) {
+			fail("RE-PIN PAGE 0 FAILED", e);
+			return;
+		}
+
 		// Read TSV file
 		for (int i = 0; i < 10; i++) {
 			movieId = "tt000000" + i;

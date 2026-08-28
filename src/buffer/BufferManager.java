@@ -344,19 +344,23 @@ public class BufferManager {
 	 */
 	public void markDirty(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		globalLock.lock();
-		try {
-			Integer frameIndex = pageTable.get(pageKey);
-			if (frameIndex == null) {
-				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
-			}
-			Frame frame = bufferPool[frameIndex];
-			if (frame.hasPage()) {
-				frame.isDirty = true;
-			}
-		} finally {
-			globalLock.unlock();
+		Integer frameIndex = pageTable.get(pageKey);
+		if (frameIndex == null) {
+			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 		}
+		Frame frame = bufferPool[frameIndex];
+		if (frame == null) {
+			throw new IllegalArgumentException("Page not in buffer: " + pageKey);
+		}
+		long snapshot = frame.state.snapshot();
+		if (FrameState.decodeState(snapshot) != FrameState.State.VALID
+				|| FrameState.decodePinCount(snapshot) == 0
+				|| !pageKey.equals(frame.pageKey)) {
+			throw new IllegalStateException(
+					"markDirty requires the caller to hold the page pinned: " + pageKey
+							+ " is " + FrameState.describe(snapshot));
+		}
+		frame.isDirty = true;
 	}
 
 	/**

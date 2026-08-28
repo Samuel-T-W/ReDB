@@ -493,6 +493,26 @@ public class BufferManagerConcurrencyTest {
 	}
 
 	@Test
+	public void testMarkDirtyRequiresTheCallerToHoldThePage() throws Exception {
+		// Readers now pin without the lock, so a lock cannot be what keeps
+		// markDirty away from an evictor. The caller's pin is: a pinned frame
+		// cannot be claimed for eviction, so nobody can be reading isDirty or
+		// writing the page out while the mark lands. Without a pin there is
+		// nothing stopping the frame being evicted and refilled first, and the
+		// mark would then dirty whichever page has taken its place.
+		String fileName = createFingerprintFile(2);
+		BufferManager bm = new BufferManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		bm.getPage(fileName, 0);
+		bm.markDirty(fileName, 0); // held: allowed
+		bm.unpinPage(fileName, 0);
+
+		assertThrows(IllegalStateException.class, () -> bm.markDirty(fileName, 0),
+				"marking a page the caller does not hold must be refused, not silently applied");
+	}
+
+	@Test
 	public void testGetPageWaitsForInFlightFlushOfSameKey() throws Exception {
 		// Goal: a getPage racing the eviction flush of the same (dirty) page
 		// must wait for the FLUSHING frame instead of reading stale bytes from
