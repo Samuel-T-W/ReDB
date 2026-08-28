@@ -95,12 +95,12 @@ public class Frame {
 			throw new IllegalStateException(
 					"frame " + frameIndex + " is not claimed by this caller: " + describeState());
 		}
-		if (!state.finishEvict()) {
-			throw new IllegalStateException("cannot clear frame " + frameIndex + ": " + describeState());
-		}
 		this.page = null;
 		this.isDirty = false;
 		this.pageKey = null;
+		if (!state.finishEvict()) {
+			throw new IllegalStateException("cannot clear frame " + frameIndex + ": " + describeState());
+		}
 	}
 
 	private String describeState() {

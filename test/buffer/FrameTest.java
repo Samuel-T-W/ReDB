@@ -2,12 +2,16 @@ package buffer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import storage.RawPage;
 
 /**
- * Covers the ownership rules around emptying a frame: which caller is allowed
- * to make the transition, and what a refused one must leave behind.
+ * Covers the ownership rules around emptying a frame: who is allowed to make
+ * the transition, and the order in which the fields and the state word move.
  */
 public class FrameTest {
 
@@ -22,6 +26,58 @@ public class FrameTest {
 		frame.pageKey = new PageKey("f", 1);
 		frame.isDirty = true;
 		frame.markValid();
+	}
+
+	@Test
+	public void aFrameIsNeverPublishedFreeWhileItStillHoldsAPage() throws Exception {
+		// FREE is the advertisement that a frame may be claimed and refilled. A
+		// frame that reaches FREE still holding its predecessor's page hands
+		// that page to its next owner, and the previous owner's trailing field
+		// writes then land on top of the new owner's.
+		final int cycles = 200_000;
+		Frame frame = freeFrame();
+		AtomicBoolean stop = new AtomicBoolean();
+		AtomicLong violations = new AtomicLong();
+		CountDownLatch done = new CountDownLatch(1);
+
+		Thread owner = new Thread(() -> {
+			try {
+				for (int i = 0; i < cycles; i++) {
+					fill(frame);
+					frame.clear();
+				}
+			} finally {
+				done.countDown();
+			}
+		});
+		Thread observer = new Thread(() -> {
+			while (!stop.get()) {
+				// Bracket the field read with two snapshots of the whole state
+				// word. An unchanged word means the frame did not move at all
+				// across the read: it cannot have returned to FREE behind our
+				// back, because every return to FREE goes through finishEvict,
+				// which bumps the version. Without the bracket the observer
+				// reports the owner's *next* fill as a violation of this one.
+				long before = frame.state.snapshot();
+				Object page = frame.page;
+				long after = frame.state.snapshot();
+				if (before == after
+						&& FrameState.decodeState(before) == FrameState.State.FREE
+						&& page != null) {
+					violations.incrementAndGet();
+				}
+			}
+		});
+
+		owner.start();
+		observer.start();
+		assertTrue(done.await(120, TimeUnit.SECONDS), "the owner never finished its cycles");
+		stop.set(true);
+		owner.join(60_000);
+		observer.join(60_000);
+
+		assertEquals(0L, violations.get(),
+				violations + " times a frame advertised itself as FREE while still holding a page");
 	}
 
 	@Test
