@@ -362,7 +362,7 @@ public class ClockReplacerTest {
 								if (!frame.isReferenced()) {
 									referencesLost.incrementAndGet();
 								}
-								frame.unpin();
+								frame.unpin(frame.version());
 							}
 						}
 					}

@@ -276,8 +276,11 @@ public class BufferManager {
 				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 			}
 			Frame frame = bufferPool[frameIndex];
+			// globalLock makes the version read and the unpin one step, so the
+			// guard cannot fire here yet. It becomes load-bearing when the lock
+			// comes off and this lookup stops being atomic with the release.
 			if (frame.state.pinCount() > 0)
-				frame.state.unpin();
+				frame.state.unpin(frame.state.version());
 		} finally {
 			globalLock.unlock();
 		}

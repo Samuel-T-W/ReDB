@@ -86,16 +86,65 @@ public final class FrameState {
 		}
 	}
 
-	/** Releases one pin. Throws {@link IllegalStateException} if none is held. */
-	public void unpin() {
+	/**
+	 * Pins the frame only if it is still the incarnation the caller observed.
+	 *
+	 * <p>This is the ABA guard the version counter exists for. A caller that
+	 * located this frame through the page table and then lost the CPU may be
+	 * looking at a frame that has since been evicted and refilled with an
+	 * entirely different page; the state word alone cannot tell the difference,
+	 * because the refilled frame is VALID again. The version has moved, so the
+	 * pin is refused and the caller must look the page up afresh.
+	 *
+	 * @param expectedVersion the version the caller saw when it chose this frame
+	 */
+	public boolean tryPin(long expectedVersion) {
 		for (;;) {
 			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodeVersion(cur) != expectedVersion) {
+				return false;
+			}
+			long pins = decodePinCount(cur);
+			if (pins == MAX_PIN_COUNT) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withReferenced(withPinCount(cur, pins + 1), true))) {
+				return true;
+			}
+		}
+	}
+
+	/**
+	 * Releases one pin taken on the incarnation identified by
+	 * {@code expectedVersion}.
+	 *
+	 * <p>Reading {@link #version()} straight after a successful pin is sound, and
+	 * is how callers come by the argument: a pinned frame cannot be recycled,
+	 * because {@link #tryClaimForEviction()} demands a pin count of zero and only
+	 * {@link #finishEvict()} moves the version. So for as long as a caller holds
+	 * a pin, the state stays VALID and the version stays put.
+	 *
+	 * <p>Checking both is what stops a late or duplicated unpin from decrementing
+	 * a pin that now belongs to someone else: without it, the count is just a
+	 * number and any caller can drop any other caller's claim, leaving a frame
+	 * evictable while it is still being read.
+	 *
+	 * @return true if a pin was released; false if the frame is no longer VALID
+	 *         or has been recycled since the caller pinned it
+	 * @throws IllegalStateException if this incarnation holds no pin at all
+	 */
+	public boolean unpin(long expectedVersion) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodeVersion(cur) != expectedVersion) {
+				return false;
+			}
 			long pins = decodePinCount(cur);
 			if (pins == 0) {
 				throw new IllegalStateException("unpin() with pinCount already 0: " + describe(cur));
 			}
 			if (word.compareAndSet(cur, withPinCount(cur, pins - 1))) {
-				return;
+				return true;
 			}
 		}
 	}

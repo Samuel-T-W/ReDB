@@ -50,7 +50,7 @@ public class FrameStateTest {
 		assertEquals(1L, fs.pinCount());
 		assertTrue(fs.isReferenced(), "tryPin must set the reference bit in the same CAS");
 
-		fs.unpin();
+		fs.unpin(fs.version());
 		assertEquals(0L, fs.pinCount());
 
 		assertTrue(fs.clearReferenced(fs.snapshot()));
@@ -180,6 +180,65 @@ public class FrameStateTest {
 				fs -> fs.clearReferenced(fs.snapshot()));
 	}
 
+	// ------------------------------------------------------- version / identity
+
+	@Test
+	public void holdingAPinFreezesTheStateAndVersion() {
+		// The premise that lets a caller read version() straight after pinning:
+		// a pinned frame cannot be claimed for eviction, and only finishEvict
+		// moves the version, so neither can move underneath the holder.
+		FrameState fs = new FrameState(State.VALID, 0L, false, 4L);
+		assertTrue(fs.tryPin(4L));
+
+		assertFalse(fs.tryClaimForEviction(), "a pinned frame must not be claimable");
+		assertFalse(fs.finishEvict(), "a VALID frame must not be recyclable");
+		assertEquals(State.VALID, fs.state());
+		assertEquals(4L, fs.version(), "the version must not move while a pin is held");
+	}
+
+	@Test
+	public void tryPinRefusesAFrameRecycledSinceTheObservation() {
+		FrameState fs = new FrameState(State.EVICTING, 0L, false, 0L);
+		long observed = fs.version();
+
+		// The frame is evicted and refilled with a different page. It is VALID
+		// again, so nothing but the version distinguishes it from what the
+		// caller thought it had found.
+		assertTrue(fs.finishEvict());
+		assertTrue(fs.tryBeginLoad());
+		assertTrue(fs.finishLoad());
+		assertEquals(State.VALID, fs.state());
+
+		assertFalse(fs.tryPin(observed), "the frame was recycled; this is a different page now");
+		assertEquals(0L, fs.pinCount(), "a refused pin must not touch the count");
+		assertTrue(fs.tryPin(observed + 1), "pinning the current incarnation must still work");
+	}
+
+	@Test
+	public void unpinRefusesAPinFromAnEarlierIncarnation() {
+		// Version 1 with one pin outstanding: the frame was recycled after an
+		// earlier caller pinned it at version 0, and its new owner holds the pin.
+		FrameState fs = new FrameState(State.VALID, 1L, false, 1L);
+
+		assertFalse(fs.unpin(0L), "a stale unpin must not drop the new owner's pin");
+		assertEquals(1L, fs.pinCount(), "the current owner's pin must survive");
+		assertTrue(fs.unpin(1L), "the owner of this incarnation may still release it");
+		assertEquals(0L, fs.pinCount());
+	}
+
+	@Test
+	public void unpinRefusedFromEveryNonValidState() {
+		for (State s : new State[] {State.FREE, State.LOADING, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(new FrameState(s, 1L, false, 0L), fs -> fs.unpin(0L));
+		}
+	}
+
+	@Test
+	public void unpinStillThrowsWhenTheCurrentIncarnationHoldsNoPin() {
+		FrameState fs = new FrameState(State.VALID, 0L, false, 2L);
+		assertThrows(IllegalStateException.class, () -> fs.unpin(2L));
+	}
+
 	@Test
 	public void clearReferencedRefusesAReferenceNewerThanTheSnapshot() {
 		FrameState fs = new FrameState(State.VALID, 0L, true, 0L);
@@ -282,7 +341,7 @@ public class FrameStateTest {
 	public void unpinBelowZeroThrows() {
 		FrameState fs = at(State.VALID);
 		long before = fs.snapshot();
-		assertThrows(IllegalStateException.class, fs::unpin);
+		assertThrows(IllegalStateException.class, () -> fs.unpin(0L));
 		assertEquals(before, fs.snapshot());
 	}
 
@@ -297,7 +356,7 @@ public class FrameStateTest {
 		assertTrue(fs.isReferenced());
 		assertEquals(99L, fs.version());
 
-		fs.unpin();
+		fs.unpin(fs.version());
 		assertEquals(FrameState.MAX_PIN_COUNT - 1, fs.pinCount());
 		assertTrue(fs.tryPin());
 		assertEquals(FrameState.MAX_PIN_COUNT, fs.pinCount());
@@ -321,7 +380,7 @@ public class FrameStateTest {
 					for (int i = 0; i < iterations; i++) {
 						if (fs.tryPin()) {
 							pinned++;
-							fs.unpin();
+							fs.unpin(fs.version());
 						}
 					}
 					return pinned;
@@ -388,7 +447,7 @@ public class FrameStateTest {
 								if (fs.state() == State.EVICTING) {
 									violation.set(true);
 								}
-								fs.unpin();
+								fs.unpin(fs.version());
 							}
 						}
 						return null;
