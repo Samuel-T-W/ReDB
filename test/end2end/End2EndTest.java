@@ -24,7 +24,7 @@ public class End2EndTest {
 	// ----------------------
 	// Shared config (edit once)
 	// ----------------------
-	private static final String MOVIES_TSV = "data/title.csv";
+	private static final String MOVIES_TSV = "data/fixtures/synthetic/title.csv";
 	private static final String MOVIES_DB = "movies.db";
 	private static final int PAGE_SIZE = 4096;
 	private static final int BUFFER_SIZE = 4;
