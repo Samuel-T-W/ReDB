@@ -406,8 +406,22 @@ public class BufferManager {
 					}
 					if (!frame.isDirty)
 						continue;
-					writePageToDisk(entry.getKey().fileId(), frame.page);
+					// Clear before writing, never after. markDirty runs without
+					// globalLock now — its exclusion comes from the caller's pin,
+					// which says nothing about force — so a modification can land
+					// while the write is in flight, or after it and before the flag
+					// is cleared. Clearing first means such a write re-dirties the
+					// page and it goes out again; clearing afterwards would declare
+					// the page clean while its newest bytes are still only in
+					// memory, and the next eviction would drop them.
 					frame.isDirty = false;
+					try {
+						writePageToDisk(entry.getKey().fileId(), frame.page);
+					} catch (IOException | RuntimeException e) {
+						// nothing was persisted, so the page is still dirty
+						frame.isDirty = true;
+						throw e;
+					}
 				}
 				if (!flushing)
 					return;

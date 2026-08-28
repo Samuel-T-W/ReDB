@@ -512,6 +512,74 @@ public class BufferManagerConcurrencyTest {
 				"marking a page the caller does not hold must be refused, not silently applied");
 	}
 
+	/** A manager that stalls AFTER the bytes have gone to disk, before the caller resumes. */
+	private static final class PostWriteStallManager extends BufferManager {
+		final CountDownLatch wrote = new CountDownLatch(1);
+		final CountDownLatch release = new CountDownLatch(1);
+		volatile boolean arm = false;
+
+		PostWriteStallManager(int bufferSize) { super(bufferSize); }
+
+		@Override
+		void writePageToDisk(String fileId, Page page) throws IOException {
+			super.writePageToDisk(fileId, page);
+			if (arm) {
+				arm = false;
+				wrote.countDown();
+				try {
+					release.await();
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+				}
+			}
+		}
+	}
+
+	@Test
+	public void testForceDoesNotMarkCleanAModificationItDidNotWrite() throws Exception {
+		// force() captures the page, writes it, then clears the dirty flag. The
+		// window that matters is between those last two steps: a modification
+		// landing there is definitely not in the bytes just written, yet clearing
+		// the flag afterwards declares the page clean. The next eviction then
+		// drops it without a write, and the modification is gone.
+		String fileName = createFingerprintFile(2);
+		PostWriteStallManager bm = new PostWriteStallManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		Page page = bm.getPage(fileName, 0);
+		page.getByteArray()[0] = (byte) 0x11;
+		bm.markDirty(fileName, 0);
+
+		bm.arm = true;
+		Thread forcer = new Thread(() -> {
+			try {
+				bm.force();
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		});
+		forcer.start();
+		assertTrue(bm.wrote.await(5, TimeUnit.SECONDS), "force must get its bytes to disk");
+
+		// 0x11 is now on disk. This modification is made while we still hold the
+		// pin, and it is provably not in what was just written.
+		page.getByteArray()[0] = (byte) 0x22;
+		bm.markDirty(fileName, 0);
+
+		bm.release.countDown();
+		forcer.join(10_000);
+		assertFalse(forcer.isAlive(), "force must finish");
+		bm.unpinPage(fileName, 0);
+
+		// 0x22 was never written, so the page must still count as dirty.
+		bm.force();
+		try (RandomAccessFile raf = new RandomAccessFile(fileName, "r")) {
+			raf.seek(RawPage.getOffset(0));
+			assertEquals((byte) 0x22, raf.readByte(),
+					"the modification made after the write was marked clean and lost");
+		}
+	}
+
 	@Test
 	public void testGetPageWaitsForInFlightFlushOfSameKey() throws Exception {
 		// Goal: a getPage racing the eviction flush of the same (dirty) page
