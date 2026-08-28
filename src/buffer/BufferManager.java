@@ -3,9 +3,11 @@ package buffer;
 import catalog.CatalogEntry;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -748,34 +750,75 @@ public class BufferManager {
 	}
 
 	/**
-	 * Every page key held by more than one frame, which must always be empty:
-	 * two frames holding one page means two divergent copies of it, and a write
-	 * through one is invisible to a reader holding the other.
+	 * Checks the pool's structural and data invariants and reports what is
+	 * broken. Empty means consistent.
 	 *
-	 * <p>Package-private, for tests. Reads the frames rather than the page
-	 * table, so it sees a duplicate the table itself cannot represent.
+	 * <p>Written to be called mid-flight, with other threads reading, loading and
+	 * evicting, not only once everything has gone quiet. A check that only runs
+	 * after the workers join cannot see a torn intermediate state, which is the
+	 * only kind these bugs produce — by the time a pool is quiescent it has
+	 * usually tidied itself up.
+	 *
+	 * <p>Takes globalLock because the scan has to be atomic with respect to
+	 * installs and evictions: read frame by frame without it and a page that
+	 * merely moves between frames during the scan looks like two copies.
 	 */
-	Set<PageKey> duplicatelyHeldPages() {
-		// Under globalLock, because the scan has to be atomic with respect to
-		// installs and evictions. Reading the frames one at a time otherwise
-		// reports a page that merely moved from one frame to another during the
-		// scan — seen in the frame it left, then again in the frame it arrived
-		// in — which is a healthy pool, not a duplicate.
+	List<String> checkInvariants() {
 		globalLock.lock();
 		try {
-			Set<PageKey> seen = new HashSet<>();
-			Set<PageKey> duplicates = new HashSet<>();
+			List<String> problems = new ArrayList<>();
+			Map<PageKey, Integer> heldBy = new HashMap<>();
 			for (int i = 0; i < bufferPool.length; i++) {
 				Frame frame = bufferPool[i];
-				if (frame == null || !frame.hasPage()) {
+				if (frame == null) {
 					continue;
 				}
+				FrameState.State state = frame.state.state();
 				PageKey key = frame.pageKey;
-				if (key != null && !seen.add(key)) {
-					duplicates.add(key);
+				if (state == FrameState.State.FREE) {
+					// A free frame is advertised as available; anything still hanging
+					// off it will be inherited by whoever claims it next.
+					if (frame.page != null) {
+						problems.add("free frame " + i + " still holds " + key);
+					}
+					if (frame.isDirty) {
+						problems.add("free frame " + i + " is still marked dirty");
+					}
+					continue;
+				}
+				if (state != FrameState.State.VALID) {
+					continue; // owned by a loader or an evictor, mid-transition
+				}
+				if (key == null) {
+					problems.add("resident frame " + i + " has no page key");
+					continue;
+				}
+				if (frame.page == null) {
+					problems.add("resident frame " + i + " holds no page for " + key);
+				}
+				Integer prior = heldBy.put(key, i);
+				if (prior != null) {
+					// two divergent copies: a write through one is invisible to the
+					// holder of the other, and the later eviction overwrites the earlier
+					problems.add(key + " is resident in frames " + prior + " and " + i);
+				}
+				Integer mapped = pageTable.get(key);
+				if (mapped == null) {
+					problems.add(key + " is resident in frame " + i + " but nothing maps to it");
+				} else if (mapped != i) {
+					problems.add(key + " maps to frame " + mapped + " but is resident in " + i);
 				}
 			}
-			return duplicates;
+			for (Map.Entry<PageKey, Integer> entry : pageTable.entrySet()) {
+				Frame frame = bufferPool[entry.getValue()];
+				if (frame == null) {
+					problems.add(entry.getKey() + " maps to frame " + entry.getValue() + ", which does not exist");
+				} else if (frame.hasPage() && !entry.getKey().equals(frame.pageKey)) {
+					problems.add(entry.getKey() + " maps to frame " + entry.getValue()
+							+ ", which holds " + frame.pageKey);
+				}
+			}
+			return problems;
 		} finally {
 			globalLock.unlock();
 		}

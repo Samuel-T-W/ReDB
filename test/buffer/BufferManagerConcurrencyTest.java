@@ -478,8 +478,8 @@ public class BufferManagerConcurrencyTest {
 							bm.markDirty(fileName, pageId);
 						}
 						bm.unpinPage(fileName, pageId);
-						assertEquals(Set.of(), bm.duplicatelyHeldPages(),
-								"a page was resident in two frames at once");
+						assertEquals(List.of(), bm.checkInvariants(),
+								"the pool broke an invariant mid-flight");
 					}
 				} catch (IOException e) {
 					throw new RuntimeException(e);
@@ -488,7 +488,7 @@ public class BufferManagerConcurrencyTest {
 		}
 		runAllAtOnce(tasks);
 
-		assertEquals(Set.of(), bm.duplicatelyHeldPages());
+		assertEquals(List.of(), bm.checkInvariants());
 		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
 	}
 
@@ -577,6 +577,69 @@ public class BufferManagerConcurrencyTest {
 			raf.seek(RawPage.getOffset(0));
 			assertEquals((byte) 0x22, raf.readByte(),
 					"the modification made after the write was marked clean and lost");
+		}
+	}
+
+	@Test
+	public void testCleanPagesMatchDiskAfterConcurrentChurn() throws Exception {
+		// The data property behind the dirty flag: a page the pool considers
+		// clean must actually be on disk, because a clean page is one eviction
+		// throws away without a write. Every worker also checks the structural
+		// invariants mid-flight, while other threads are loading and evicting,
+		// rather than only once everything has gone quiet.
+		final int poolSize = 6;
+		final int numPages = 32;
+		final int threads = 4;
+		final int iterations = 1_500;
+
+		String fileName = createFingerprintFile(numPages);
+		BufferManager bm = new BufferManager(poolSize);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		List<Runnable> tasks = new ArrayList<>();
+		for (int t = 0; t < threads; t++) {
+			final long seed = 991L + t;
+			tasks.add(() -> {
+				Random random = new Random(seed);
+				try {
+					for (int i = 0; i < iterations; i++) {
+						int pageId = random.nextInt(numPages);
+						Page page = bm.getPage(fileName, pageId);
+						// Rewrite the fingerprint with its own value, so the
+						// bytes stay predictable while the page really is
+						// modified and marked dirty under a held pin.
+						page.getByteArray()[8] = (byte) pageId;
+						if (random.nextInt(3) == 0) {
+							bm.markDirty(fileName, pageId);
+						}
+						bm.unpinPage(fileName, pageId);
+						if (i % 64 == 0) {
+							assertEquals(List.of(), bm.checkInvariants(),
+									"the pool broke an invariant mid-flight");
+						}
+						if (random.nextInt(256) == 0) {
+							bm.force();
+						}
+					}
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+		}
+		runAllAtOnce(tasks);
+
+		assertEquals(List.of(), bm.checkInvariants());
+		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+
+		// Nothing is dirty once force has run, so every page must read back its
+		// own fingerprint from disk.
+		bm.force();
+		try (RandomAccessFile raf = new RandomAccessFile(fileName, "r")) {
+			for (int pageId = 0; pageId < numPages; pageId++) {
+				raf.seek(RawPage.getOffset(pageId) + 8);
+				assertEquals((byte) pageId, raf.readByte(),
+						"page " + pageId + " was reported clean but disk disagrees");
+			}
 		}
 	}
 
