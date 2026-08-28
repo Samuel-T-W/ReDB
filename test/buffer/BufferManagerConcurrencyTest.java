@@ -644,6 +644,51 @@ public class BufferManagerConcurrencyTest {
 	}
 
 	@Test
+	public void testResidentReadsAreServedWithoutTheGlobalLock() throws Exception {
+		// What the lock-free hit path is actually for, stated as a fact about
+		// the code path rather than a latency figure. A hand-rolled timing
+		// harness on a workload this small measures scheduler noise; this is
+		// exact and reproducible.
+		final int poolSize = 8;
+		final int numPages = 4;
+		final int threads = 4;
+		final int iterations = 5_000;
+
+		String fileName = createFingerprintFile(numPages);
+		BufferManager bm = new BufferManager(poolSize);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		// Warm every page in, so the run below is pure cache hits.
+		for (int pageId = 0; pageId < numPages; pageId++) {
+			bm.getPage(fileName, pageId);
+			bm.unpinPage(fileName, pageId);
+		}
+		bm.resetIOCounts();
+
+		List<Runnable> tasks = new ArrayList<>();
+		for (int t = 0; t < threads; t++) {
+			tasks.add(() -> {
+				try {
+					for (int i = 0; i < iterations; i++) {
+						int pageId = i % numPages;
+						bm.getPage(fileName, pageId);
+						bm.unpinPage(fileName, pageId);
+					}
+				} catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+		}
+		runAllAtOnce(tasks);
+
+		long expected = (long) threads * iterations;
+		assertEquals(0, bm.getReadIOCount(), "the working set is resident, so nothing should be read");
+		assertEquals(expected, bm.getLockFreeHitCount(),
+				"every hit on a resident page must be served without globalLock");
+		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+	}
+
+	@Test
 	public void testGetPageWaitsForInFlightFlushOfSameKey() throws Exception {
 		// Goal: a getPage racing the eviction flush of the same (dirty) page
 		// must wait for the FLUSHING frame instead of reading stale bytes from

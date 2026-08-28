@@ -59,6 +59,10 @@ public class BufferManager {
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private final LongAdder readIOCount = new LongAdder();
 	private final LongAdder writeIOCount = new LongAdder();
+	// getPage calls served without ever acquiring globalLock. Counts a code
+	// path taken, not time saved: it is exact and reproducible, where a latency
+	// figure from a hand-rolled harness on this workload would be neither.
+	private final LongAdder lockFreeHitCount = new LongAdder();
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
@@ -247,6 +251,7 @@ public class BufferManager {
 			return null;
 		}
 		if (pageKey.equals(frame.pageKey)) {
+			lockFreeHitCount.increment();
 			return frame.page;
 		}
 		// The index was stale and this frame belongs to another page. Hand the
@@ -693,7 +698,9 @@ public class BufferManager {
 		}
 	}
 
-	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); }
+	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); lockFreeHitCount.reset(); }
+	/** getPage calls served entirely without globalLock. */
+	public long getLockFreeHitCount() { return lockFreeHitCount.sum(); }
 	public long getReadIOCount()  { return readIOCount.sum();  }
 	public long getWriteIOCount() { return writeIOCount.sum(); }
 	public long getTotalIOCount() { return readIOCount.sum() + writeIOCount.sum(); }
