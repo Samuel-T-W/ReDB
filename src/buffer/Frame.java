@@ -44,42 +44,63 @@ public class Frame {
 	}
 
 	/**
-	 * Empties the frame. The state transition runs first so the operation is
-	 * all-or-nothing: a refused transition throws with the frame's fields still
-	 * intact, never leaving a frame that reports hasPage() while holding no page.
+	 * Empties a frame this caller does not yet own, by taking the eviction claim
+	 * first and then finishing it.
+	 *
+	 * <p>A frame already in EVICTING or FLUSHING belongs to whoever claimed it.
+	 * Treating any non-FREE state as this caller's own — which is what reaching
+	 * straight for finishEvict amounts to — hands one frame to two owners: the
+	 * claimant writing the page back to disk, and this caller freeing it out
+	 * from underneath. So ownership is proved by winning the claim here, and a
+	 * frame that is anyone else's is refused.
 	 */
 	public void clear() {
-		resetState();
-		this.page = null;
-		this.isDirty = false;
-		this.pageKey = null;
-	}
-
-	/** Drives the state word back to FREE with pin count 0 and a bumped version. */
-	private void resetState() {
 		FrameState.State current = state.state();
 		if (current == FrameState.State.FREE) {
+			// Nobody owns a FREE frame, so there are no fields to erase and
+			// nothing here may touch them.
 			return;
 		}
-		// A victim handed over by the clock replacer arrives already claimed in
-		// EVICTING and exclusively owned by this caller, so it only needs
-		// finishing. An unclaimed VALID frame must be claimed here first.
-		if (current == FrameState.State.VALID) {
-			// Unlike the clock sweeper, this caller is not spending a second
-			// chance it observed — it is forcing the frame down regardless of
-			// who touched it, so it retries over whatever the word currently
-			// reads. That retry used to live inside clearReferenced(); it is
-			// spelled out here now that the sweeper needs the guarded form.
-			for (long snap = state.snapshot(); FrameState.decodeReferenced(snap); snap = state.snapshot()) {
-				state.clearReferenced(snap);
-			}
-			if (!state.tryClaimForEviction()) {
-				throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
-			}
+		if (current != FrameState.State.VALID) {
+			throw new IllegalStateException(
+					"frame " + frameIndex + " is not this caller's to clear: " + describeState());
+		}
+		// Force the reference bit down so the claim's precondition can be met.
+		// Unlike the clock sweeper this caller is not spending a second chance
+		// it observed, so it retries over whatever the word currently reads.
+		for (long snap = state.snapshot(); FrameState.decodeReferenced(snap); snap = state.snapshot()) {
+			state.clearReferenced(snap);
+		}
+		if (!state.tryClaimForEviction()) {
+			throw new IllegalStateException("cannot claim frame " + frameIndex + " to clear: " + describeState());
+		}
+		clearOwned();
+	}
+
+	/**
+	 * Empties a frame this caller already holds in one of the exclusive states,
+	 * EVICTING or FLUSHING, and publishes it FREE.
+	 *
+	 * <p>The fields are erased before the transition, not after. FREE is the
+	 * advertisement that a frame may be claimed and refilled, so a frame that
+	 * reaches FREE still holding its predecessor's page hands that page to its
+	 * next owner, and the previous owner's trailing writes then land on top of
+	 * the new owner's. Holding the exclusive claim is what makes erasing first
+	 * safe: no sweeper can select the frame and no reader can pin it, so the
+	 * half-erased frame is visible to nobody.
+	 */
+	public void clearOwned() {
+		FrameState.State current = state.state();
+		if (current != FrameState.State.EVICTING && current != FrameState.State.FLUSHING) {
+			throw new IllegalStateException(
+					"frame " + frameIndex + " is not claimed by this caller: " + describeState());
 		}
 		if (!state.finishEvict()) {
 			throw new IllegalStateException("cannot clear frame " + frameIndex + ": " + describeState());
 		}
+		this.page = null;
+		this.isDirty = false;
+		this.pageKey = null;
 	}
 
 	private String describeState() {

@@ -425,7 +425,7 @@ public class BufferManager {
 				}
 				int frameIndex = evictFrame.frameIndex;
 				pageTable.remove(victimKey);
-				evictFrame.clear();
+				evictFrame.clearOwned();
 				return frameIndex;
 			} finally {
 				// every flush exit, after the frame has settled. the 50ms await
@@ -437,7 +437,7 @@ public class BufferManager {
 		// evict frame content and hand the frame to the caller
 		int frameIndex = evictFrame.frameIndex;
 		pageTable.remove(victimKey);
-		evictFrame.clear();
+		evictFrame.clearOwned();
 		flushSettled.signalAll();
 		return frameIndex;
 	}
@@ -544,8 +544,10 @@ public class BufferManager {
 		if (frame == null) {
 			return;
 		}
-		// state transition first, fields second, matching Frame.clear(): a
-		// refused unwind must leave the frame's fields intact, not half-erased
+		// An unfilled claim is finished back out through the same door every
+		// other caller uses: markValid lands the frame in VALID, and clear()
+		// then proves ownership by taking the eviction claim before erasing
+		// anything. A refused unwind leaves the frame's fields intact.
 		try {
 			if (frame.state.state() == FrameState.State.LOADING) {
 				frame.markValid();
