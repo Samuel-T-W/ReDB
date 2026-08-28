@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
@@ -24,7 +25,7 @@ public class BufferManager {
 	private final Map<String, CatalogEntry> catalog;
 	private Map<String, FileState> fileStates = new HashMap<>();
 	private final ReentrantLock fileStatesLock = new ReentrantLock();
-	private Map<PageKey, Integer> pageTable;
+	private final ConcurrentMap<PageKey, Integer> pageTable;
 	private Frame[] bufferPool;
 	// Packed atomic state word per frame, index-aligned with bufferPool and
 	// populated in full at construction: bufferPool entries are built lazily, so
@@ -55,7 +56,7 @@ public class BufferManager {
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
-		this.pageTable = new HashMap<>();
+		this.pageTable = new ConcurrentHashMap<>();
 		this.bufferPool = new Frame[bufferSize];
 		this.frameStates = new FrameState[bufferSize];
 
@@ -104,6 +105,10 @@ public class BufferManager {
 	 */
 	public Page getPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
+		Page hit = tryPinHit(pageKey);
+		if (hit != null) {
+			return hit;
+		}
 		globalLock.lock();
 		try {
 			for (;;) {
@@ -174,6 +179,66 @@ public class BufferManager {
 		} finally {
 			globalLock.unlock();
 		}
+	}
+
+	/**
+	 * Serves a cache hit without taking globalLock, or returns null to send the
+	 * caller down the locked path.
+	 *
+	 * <p>Two separate things can be stale here, and each needs its own guard.
+	 *
+	 * <p>The page table read can be stale: by the time it returns, the page may
+	 * have been evicted and the frame refilled with something else. So the frame
+	 * index is a hint, never proof, and the frame's own pageKey is what decides.
+	 * That check has to come after the pin, not before: only the pin stops the
+	 * frame being claimed for eviction, and only a frame that cannot be claimed
+	 * has a stable pageKey and page.
+	 *
+	 * <p>The state snapshot can also be stale: the frame may be recycled between
+	 * the snapshot and the pin, arriving back in VALID holding a different page.
+	 * Pinning at the observed version is what rejects that, since every return
+	 * to FREE moves the version.
+	 *
+	 * <p>Reading bufferPool without the lock races the lazy construction in the
+	 * miss path, which is benign in both directions: a stale null just falls
+	 * through to the locked path, and a Frame published by that race is still
+	 * safe to touch, because the only field read before the pin is {@code state},
+	 * which is final.
+	 */
+	private Page tryPinHit(PageKey pageKey) {
+		Integer frameIndex = pageTable.get(pageKey);
+		if (frameIndex == null) {
+			return null;
+		}
+		afterPageTableRead();
+		Frame frame = bufferPool[frameIndex];
+		if (frame == null) {
+			return null;
+		}
+		long snapshot = frame.state.snapshot();
+		if (FrameState.decodeState(snapshot) != FrameState.State.VALID) {
+			return null;
+		}
+		long version = FrameState.decodeVersion(snapshot);
+		if (!frame.state.tryPin(version)) {
+			return null;
+		}
+		if (pageKey.equals(frame.pageKey)) {
+			return frame.page;
+		}
+		// The index was stale and this frame belongs to another page. Hand the
+		// pin straight back rather than serving its holder someone else's data.
+		frame.state.unpin(version);
+		return null;
+	}
+
+	/**
+	 * Hook between the page table read and the pin that acts on it. Does nothing
+	 * in production; overridable so tests can hold the window open and make the
+	 * stale-index race deterministic, in the same way writePageToDisk and
+	 * readPageFromDisk let tests stall a flush or a load.
+	 */
+	void afterPageTableRead() {
 	}
 
 	/** Parks (never spins) until a load or flush settles. globalLock must be held. */
@@ -424,7 +489,9 @@ public class BufferManager {
 					throw failure;
 				}
 				int frameIndex = evictFrame.frameIndex;
-				pageTable.remove(victimKey);
+				// conditional: only unmap the entry still pointing at this frame, never a
+				// mapping a later loader installed for the same key on another frame
+				pageTable.remove(victimKey, frameIndex);
 				evictFrame.clearOwned();
 				return frameIndex;
 			} finally {
@@ -436,7 +503,7 @@ public class BufferManager {
 
 		// evict frame content and hand the frame to the caller
 		int frameIndex = evictFrame.frameIndex;
-		pageTable.remove(victimKey);
+		pageTable.remove(victimKey, frameIndex);
 		evictFrame.clearOwned();
 		flushSettled.signalAll();
 		return frameIndex;

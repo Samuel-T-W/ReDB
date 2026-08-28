@@ -379,6 +379,73 @@ public class BufferManagerConcurrencyTest {
 				"free frames plus used frames must account for the whole pool");
 	}
 
+	/** A manager that holds the hit path's stale-index window open on demand. */
+	private static final class ControlledHitManager extends BufferManager {
+		final CountDownLatch reachedWindow = new CountDownLatch(1);
+		final CountDownLatch releaseWindow = new CountDownLatch(1);
+		volatile boolean arm = false;
+
+		ControlledHitManager(int bufferSize) { super(bufferSize); }
+
+		@Override
+		void afterPageTableRead() {
+			if (!arm) {
+				return;
+			}
+			arm = false; // only the first caller through the window is held
+			reachedWindow.countDown();
+			try {
+				releaseWindow.await();
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		}
+	}
+
+	@Test
+	public void testCacheHitNeverServesAPageTheCallerDidNotAskFor() throws Exception {
+		// The lock-free hit path reads the page table without the lock, so the
+		// frame index it gets back is only a hint: by the time it is used, that
+		// frame may have been evicted and refilled with an entirely different
+		// page. Nothing in the state word tells the two apart — the frame is
+		// VALID either way, and pinning at the observed version succeeds, because
+		// the version observed is the refilled frame's own. Only the frame's
+		// pageKey settles it.
+		//
+		// In production that window is a few instructions wide, so this holds it
+		// open explicitly rather than hoping churn lands inside it.
+		String fileName = createFingerprintFile(2);
+		ControlledHitManager bm = new ControlledHitManager(1);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		// Frame 0 holds page 0, evictable.
+		bm.getPage(fileName, 0);
+		bm.unpinPage(fileName, 0);
+
+		// A reader asks for page 0, reads the page table, and stops there.
+		byte[] seen = new byte[1];
+		bm.arm = true;
+		Thread reader = startGet(bm, fileName, 0, seen);
+		assertTrue(bm.reachedWindow.await(5, TimeUnit.SECONDS), "the reader must reach the window");
+
+		// The one frame is recycled underneath it: page 0 out, page 1 in. The
+		// reader's index now points at a frame holding someone else's page.
+		bm.getPage(fileName, 1);
+		bm.unpinPage(fileName, 1);
+
+		bm.releaseWindow.countDown();
+		reader.join(10_000);
+		assertFalse(reader.isAlive(), "the reader must finish");
+
+		assertEquals((byte) 0, seen[0],
+				"getPage(0) served the contents of another page through a stale frame index");
+
+		// startGet leaves the reader's pin outstanding; releasing it here also
+		// checks the pin landed on the frame that really does hold page 0.
+		bm.unpinPage(fileName, 0);
+		assertEquals(0, bm.getTotalPinCount(), "pins must balance to zero");
+	}
+
 	@Test
 	public void testGetPageWaitsForInFlightFlushOfSameKey() throws Exception {
 		// Goal: a getPage racing the eviction flush of the same (dirty) page
