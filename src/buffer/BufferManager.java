@@ -11,7 +11,6 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -263,12 +262,26 @@ public class BufferManager {
 	void afterPageTableRead() {
 	}
 
-	/** Parks (never spins) until a load or flush settles. globalLock must be held. */
+	/**
+	 * Parks until a load or flush settles. globalLock must be held.
+	 *
+	 * <p>The wait is untimed on purpose. Every caller tests its predicate while
+	 * holding globalLock and parks on this condition without letting go of it,
+	 * and every change to what those predicates read — a frame reaching VALID,
+	 * a mapping being installed or retired — signals under the same lock. There
+	 * is therefore no gap for a signal to slip through, and a bounded wait would
+	 * only convert a real missed signal into a slow one, which is exactly the
+	 * kind of bug that never gets found. If this ever hangs, a settle point is
+	 * missing its signal; add the signal rather than a timeout.
+	 */
 	private void awaitFlushSettled() {
 		try {
-			flushSettled.await(50, TimeUnit.MILLISECONDS);
+			flushSettled.await();
 		} catch (InterruptedException e) {
+			// Restoring the flag and looping would spin, because the next await
+			// rethrows immediately. Hand the interrupt to the caller instead.
 			Thread.currentThread().interrupt();
+			throw new IllegalStateException("interrupted while waiting for a page to settle", e);
 		}
 	}
 
@@ -517,8 +530,8 @@ public class BufferManager {
 				evictFrame.clearOwned();
 				return frameIndex;
 			} finally {
-				// every flush exit, after the frame has settled. the 50ms await
-				// timeout is insurance against a missed signal, not the wait
+				// every flush exit, after the frame has settled: the waiters' predicate
+				// has changed, and nothing but this signal will wake them
 				flushSettled.signalAll();
 			}
 		}
