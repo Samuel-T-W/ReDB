@@ -341,6 +341,16 @@ public class BufferManager {
 	 * @return The RawPage whose content is stored in a frame of the buffer pool.
 	 */
 	public RawPage createPage(String fileId, byte[] data) throws IOException {
+		return (RawPage) createPinnedPage(fileId, data).page();
+	}
+
+	/**
+	 * Allocates a new page and returns the handle for the pin taken on it.
+	 * {@link #createPage} unwraps the page so existing key-based callers keep
+	 * working. The allocation itself stays on globalLock: it is a structural
+	 * mutation, not a cache hit.
+	 */
+	public PageHandle createPinnedPage(String fileId, byte[] data) throws IOException {
 		int nextPageId = getOrCreateFileState(fileId).allocatePageId();
 		PageKey pageKey = new PageKey(fileId, nextPageId);
 
@@ -354,10 +364,10 @@ public class BufferManager {
 		acquireGlobalLock();
 		try {
 			addToFrame(pageKey, page, true);
+			return bindHandle(bufferPool[pageTable.get(pageKey)], pageKey);
 		} finally {
 			globalLock.unlock();
 		}
-		return page;
 	}
 
 	/**

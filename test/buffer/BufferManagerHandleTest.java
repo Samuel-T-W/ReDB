@@ -139,6 +139,33 @@ public class BufferManagerHandleTest {
 	}
 
 	@Test
+	public void createPinnedPageReturnsAHandleThatUnpinsThatAllocation() throws Exception {
+		BufferManager bm = new BufferManager(2);
+		PageHandle created = bm.createPinnedPage("scratch", null);
+
+		assertEquals("scratch", created.fileId());
+		assertEquals(0, created.pageId());
+		assertEquals(1, bm.getPinCount("scratch", 0));
+		assertEquals(List.of(), bm.checkInvariants());
+
+		bm.unpinPage(created);
+		assertTrue(created.isReleased());
+		assertEquals(0, bm.getTotalPinCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
+	public void createPageStillUnwrapsAndKeyBasedUnpinStillWorks() throws Exception {
+		BufferManager bm = new BufferManager(1);
+		RawPage page = bm.createPage("scratch", null);
+		assertEquals(0, page.getPid());
+		assertEquals(1, bm.getPinCount("scratch", 0));
+		bm.unpinPage("scratch", 0);
+		assertEquals(0, bm.getTotalPinCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
 	public void getPageStillUnwrapsThePinnedPage() throws Exception {
 		String file = fingerprintFile(1);
 		BufferManager bm = new BufferManager(1);
