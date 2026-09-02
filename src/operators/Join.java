@@ -1,6 +1,7 @@
 package operators;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ public class Join implements Operator {
     // Per-block state — rebuilt on every new outer block
     private Map<String, List<RecordId>> hashTable;
     private Map<Integer, GenericPage> blockPageById;
-    private List<Integer> currentBlockPageIds;
+    private List<PageHandle> currentBlockPages;
 
     // Iteration state — persists across next() calls
     private boolean outerExhausted;
@@ -67,7 +68,7 @@ public class Join implements Operator {
         pendingInner = null;
         hashTable = new HashMap<>();
         blockPageById = new HashMap<>();
-        currentBlockPageIds = new ArrayList<>();
+        currentBlockPages = new ArrayList<>();
         loadNextBlock();
     }
 
@@ -136,10 +137,10 @@ public class Join implements Operator {
 
             if (currentBlockPage == null || currentBlockPage.isFull()) {
                 try {
-                    RawPage raw = bm.createPage(blockFileId, null);
-                    currentBlockPage = new GenericPage(raw, outerSchema);
-                    currentBlockPageIds.add(raw.getPid());
-                    blockPageById.put(raw.getPid(), currentBlockPage);
+                    PageHandle handle = bm.createPinnedPage(blockFileId, null);
+                    currentBlockPage = new GenericPage((RawPage) handle.page(), outerSchema);
+                    currentBlockPages.add(handle);
+                    blockPageById.put(handle.pageId(), currentBlockPage);
                     pagesLoaded++;
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to allocate block page", e);
@@ -163,13 +164,13 @@ public class Join implements Operator {
     }
 
     private void unpinBlockPages() {
-        if (currentBlockPageIds == null) {
+        if (currentBlockPages == null) {
             return;
         }
-        for (int pid : currentBlockPageIds) {
-            bm.unpinPage(blockFileId, pid);
+        for (PageHandle handle : currentBlockPages) {
+            bm.unpinPage(handle);
         }
-        currentBlockPageIds = new ArrayList<>();
+        currentBlockPages = new ArrayList<>();
         blockPageById = new HashMap<>();
         hashTable = new HashMap<>();
     }
