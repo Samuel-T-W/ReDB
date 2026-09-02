@@ -11,25 +11,31 @@ import storage.Page;
  * handle cannot decrement a pin that now belongs to a recycled page. The
  * handle is single-use — {@link #markReleased()} succeeds once — because two
  * unpins of the same incarnation would otherwise drop a sibling holder's pin.
+ *
+ * <p>A frame index and a version only mean anything inside the pool they were
+ * read from, so the handle also carries the manager that minted it and
+ * {@link BufferManager#unpinPage(PageHandle)} refuses a foreign handle.
  */
 public final class PageHandle {
 
+	private final BufferManager owner;
 	private final int frameIndex;
 	private final long version;
 	private final PageKey key;
 	private final Page page;
 	private final AtomicBoolean released = new AtomicBoolean(false);
 
-	PageHandle(int frameIndex, long version, PageKey key, Page page) {
+	PageHandle(BufferManager owner, int frameIndex, long version, PageKey key, Page page) {
 		if (frameIndex < 0) {
 			throw new IllegalArgumentException("frameIndex must be non-negative");
 		}
 		if (version < 0) {
 			throw new IllegalArgumentException("version must be non-negative");
 		}
-		if (key == null || page == null) {
-			throw new NullPointerException("page handle requires a key and a page");
+		if (owner == null || key == null || page == null) {
+			throw new NullPointerException("page handle requires an owner, a key and a page");
 		}
+		this.owner = owner;
 		this.frameIndex = frameIndex;
 		this.version = version;
 		this.key = key;
@@ -50,6 +56,11 @@ public final class PageHandle {
 
 	public int pageId() {
 		return key.pageId();
+	}
+
+	/** The buffer manager whose pool this handle's frame index belongs to. */
+	BufferManager owner() {
+		return owner;
 	}
 
 	int frameIndex() {

@@ -108,7 +108,7 @@ public class BufferManagerHandleTest {
 		assertNotEquals(oldVersion, reloaded.version());
 		assertEquals(1, bm.getPinCount(file, 0));
 
-		PageHandle forged = new PageHandle(frameIndex, oldVersion, key, reloaded.page());
+		PageHandle forged = new PageHandle(bm, frameIndex, oldVersion, key, reloaded.page());
 		assertThrows(IllegalStateException.class, () -> bm.unpinPage(forged),
 				"unpinning a recycled version must not drop the new pin");
 		assertEquals(1, bm.getPinCount(file, 0));
@@ -178,6 +178,34 @@ public class BufferManagerHandleTest {
 		assertEquals(1, bm.getLockFreeHitCount());
 		bm.unpinPage(file, 0);
 		assertEquals(0, bm.getTotalPinCount());
+	}
+
+	@Test
+	public void foreignHandleUnpinIsRejectedAndLeavesBothPoolsIntact() throws Exception {
+		String fileA = fingerprintFile(1);
+		String fileB = fingerprintFile(1);
+		BufferManager a = new BufferManager(1);
+		BufferManager b = new BufferManager(1);
+		a.register(new TableEntry(fileA, SCHEMA));
+		b.register(new TableEntry(fileB, SCHEMA));
+
+		PageHandle handleFromA = a.pinPage(fileA, 0);
+		b.pinPage(fileB, 0);
+		// Same frame index in both pools, so a foreign unpin would land on b's page.
+		assertEquals(0, handleFromA.frameIndex());
+
+		assertThrows(IllegalArgumentException.class, () -> b.unpinPage(handleFromA));
+
+		assertEquals(1, b.getPinCount(fileB, 0), "b's own pin must survive the foreign unpin");
+		assertFalse(handleFromA.isReleased(), "a rejected unpin must not consume the handle");
+
+		a.unpinPage(handleFromA);
+		assertEquals(0, a.getPinCount(fileA, 0));
+		assertEquals(0, a.getTotalPinCount());
+		assertEquals(List.of(), a.checkInvariants());
+
+		b.unpinPage(fileB, 0);
+		assertEquals(List.of(), b.checkInvariants());
 	}
 
 	private static String fingerprintFile(int numPages) throws IOException {

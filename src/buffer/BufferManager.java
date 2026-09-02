@@ -249,7 +249,7 @@ public class BufferManager {
 	 * which is final.
 	 */
 	private PageHandle bindHandle(Frame frame, PageKey key) {
-		return new PageHandle(frame.frameIndex, frame.state.version(), key, frame.page);
+		return new PageHandle(this, frame.frameIndex, frame.state.version(), key, frame.page);
 	}
 
 	private PageHandle tryPinHit(PageKey pageKey) {
@@ -272,7 +272,7 @@ public class BufferManager {
 		}
 		if (pageKey.equals(frame.pageKey)) {
 			lockFreeHitCount.increment();
-			return new PageHandle(frame.frameIndex, version, pageKey, frame.page);
+			return new PageHandle(this, frame.frameIndex, version, pageKey, frame.page);
 		}
 		// The index was stale and this frame belongs to another page. Hand the
 		// pin straight back rather than serving its holder someone else's data.
@@ -432,8 +432,17 @@ public class BufferManager {
 	 * The handle already names the frame and version, so there is no key
 	 * lookup that could land on a recycled page. markReleased runs first so
 	 * a duplicated unpin cannot drop a sibling holder's pin.
+	 *
+	 * <p>Ownership is checked before the handle is consumed: a frame index only
+	 * names a frame within the pool that minted it, so a handle from another
+	 * manager would decrement an unrelated frame. Rejecting it first leaves the
+	 * handle unreleased and still usable by its real owner.
 	 */
 	public void unpinPage(PageHandle handle) {
+		if (handle.owner() != this) {
+			throw new IllegalArgumentException(
+					"handle belongs to another buffer manager: " + handle);
+		}
 		if (!handle.markReleased()) {
 			throw new IllegalStateException("handle already unpinned: " + handle);
 		}

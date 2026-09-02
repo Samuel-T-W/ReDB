@@ -7,11 +7,13 @@ import storage.RawPage;
 
 public class PageHandleTest {
 
+	private static final BufferManager OWNER = new BufferManager(1);
+
 	@Test
 	public void handleExposesThePinnedPageAndItsIdentity() {
 		PageKey key = new PageKey("movies.db", 7);
 		RawPage page = new RawPage(7);
-		PageHandle handle = new PageHandle(3, 11L, key, page);
+		PageHandle handle = new PageHandle(OWNER, 3, 11L, key, page);
 
 		assertSame(page, handle.page());
 		assertEquals(key, handle.key());
@@ -26,7 +28,7 @@ public class PageHandleTest {
 
 	@Test
 	public void markReleasedSucceedsOnce() {
-		PageHandle handle = new PageHandle(0, 0L, new PageKey("f", 0), new RawPage(0));
+		PageHandle handle = new PageHandle(OWNER, 0, 0L, new PageKey("f", 0), new RawPage(0));
 
 		assertTrue(handle.markReleased(), "the pin this handle represents is released once");
 		assertTrue(handle.isReleased());
@@ -38,8 +40,8 @@ public class PageHandleTest {
 	public void twoHandlesAreDistinctPinTokensEvenForTheSameIncarnation() {
 		PageKey key = new PageKey("f", 1);
 		RawPage page = new RawPage(1);
-		PageHandle first = new PageHandle(2, 4L, key, page);
-		PageHandle second = new PageHandle(2, 4L, key, page);
+		PageHandle first = new PageHandle(OWNER, 2, 4L, key, page);
+		PageHandle second = new PageHandle(OWNER, 2, 4L, key, page);
 
 		assertNotSame(first, second);
 		assertTrue(first.markReleased());
@@ -52,9 +54,19 @@ public class PageHandleTest {
 		PageKey key = new PageKey("f", 0);
 		RawPage page = new RawPage(0);
 
-		assertThrows(IllegalArgumentException.class, () -> new PageHandle(-1, 0L, key, page));
-		assertThrows(IllegalArgumentException.class, () -> new PageHandle(0, -1L, key, page));
-		assertThrows(NullPointerException.class, () -> new PageHandle(0, 0L, null, page));
-		assertThrows(NullPointerException.class, () -> new PageHandle(0, 0L, key, null));
+		assertThrows(IllegalArgumentException.class, () -> new PageHandle(OWNER, -1, 0L, key, page));
+		assertThrows(IllegalArgumentException.class, () -> new PageHandle(OWNER, 0, -1L, key, page));
+		assertThrows(NullPointerException.class, () -> new PageHandle(OWNER, 0, 0L, null, page));
+		assertThrows(NullPointerException.class, () -> new PageHandle(OWNER, 0, 0L, key, null));
+		assertThrows(NullPointerException.class, () -> new PageHandle(null, 0, 0L, key, page));
+	}
+
+	@Test
+	public void handleNamesTheManagerThatMintedIt() {
+		BufferManager other = new BufferManager(1);
+		PageHandle handle = new PageHandle(OWNER, 0, 0L, new PageKey("f", 0), new RawPage(0));
+
+		assertSame(OWNER, handle.owner());
+		assertNotSame(other, handle.owner());
 	}
 }
