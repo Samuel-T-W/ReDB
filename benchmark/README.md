@@ -184,6 +184,76 @@ aws ec2 stop-instances --instance-ids i-078521131c52e1d0a --region us-east-1
 A `c7i.2xlarge` bills by the second while running, so leaving it up is the expensive failure mode.
 Stopping preserves the volume, so the next session resumes from step 1.
 
+# Memory-budgeted full-IMDb benchmark
+
+Use this workflow, not the default matrix above, whenever the question is about buffer pool behaviour: eviction policy, replacement, pin/unpin cost, or lock contention.
+
+`benchmark/run_shared_engine_benchmark.py` hardcodes `MATRIX = ((1,1,20),(2,2,40),(4,4,80))`, so its pool is 20 to 80 frames against a multi-gigabyte table.
+Those runs are dominated by sequential page I/O and BNL join CPU, measured at roughly 120 s per query.
+Any buffer-pool change is a rounding error at that query length, so the result measures the workload rather than the code.
+
+`benchmark/redb_bench.sh` exists for the opposite regime.
+It sizes one shared pool to fill a simulated small machine, then runs the full IMDb dataset against it, so the pool is saturated and eviction runs continuously.
+
+## Two checkouts, two volumes
+
+The instance carries two independent working copies, and `df -h /` shows only the first.
+
+| Path | Volume | Dataset |
+| --- | --- | --- |
+| `/home/ubuntu/ReDB` | root, 6.7 GB | compact CSVs, ~475k titles |
+| `/data/ReDB` | `/dev/nvme1n1`, 98 GB | full IMDb snapshot, 12.7M titles |
+
+Run `df -h` with no argument, or the `/data` volume is invisible.
+
+The `.db` files in `/home/ubuntu/ReDB` date from June and predate the current record layout.
+Using them fails with `Offset or length out of bounds`.
+Regenerate with `./run.sh pre_process`, which takes about 20 seconds on the compact CSVs.
+
+`/data/ReDB` holds the full heap files at the current layout, about 12.4 GB total.
+They are reusable by any branch whose `PreProcessor` schema matches (`movieId` 10, `title` 482, `category` 20, `name` 105), so confirm the schema before spending an hour regenerating them.
+
+## Running it
+
+Always start with the budget, which executes nothing:
+
+```bash
+/data/ReDB/benchmark/redb_bench.sh --dry-run
+```
+
+For a 4 GiB simulated machine this prints `-Xmx3796m` and 388710 frames, a pool of about 1.59 GB against a 12.4 GB working set.
+That ratio is the point: the working set cannot fit, so the replacer is on the hot path.
+
+```bash
+cd /data/ReDB
+mvn -q compile
+setsid nohup ./benchmark/redb_bench.sh --mode shared > ~/bench.log 2>&1 < /dev/null &
+```
+
+`setsid nohup` is required, not tidiness.
+The benchmark outlives any single SSH session, and a client that disconnects or is backgrounded takes the remote JVM down with it, leaving query output but no `engine.metrics`.
+
+`redb_bench.sh` needs `sudo` for `systemd-run` and for dropping caches, so it cannot run under a non-interactive key without passwordless sudo.
+
+Budget roughly 33, 28, and 21 minutes for shared concurrency 1, 2, and 4, about 83 minutes for the sweep.
+`--mode both` also runs the legacy multi-JVM path and roughly doubles that.
+
+## Reference numbers
+
+From the archived 2026-08-16 run, 4 GiB cgroup, swap disabled, caches dropped, 3 repetitions:
+
+| clients | mean makespan | read I/Os |
+| --- | --- | --- |
+| 1 | 393 s | 27,625,995 |
+| 2 | 326 s | 18,543,333 |
+| 4 | 224 s | 9,460,671 |
+
+Read I/O falling as clients rise is the shared pool working, since concurrent queries reuse each other's resident pages.
+Treat these as the baseline shape to reproduce before trusting a new run.
+
+The archived legacy and shared runs are not directly comparable to each other: the shared side used a 4 GiB cgroup and 3 repetitions while the legacy side used its Python harness with 5.
+Comparisons between branches are sound as long as both sides use this driver with identical flags.
+
 # ReDB concurrent query benchmark
 
 This benchmark runs the existing `run_query` plan with multiple isolated JVM
