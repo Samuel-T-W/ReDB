@@ -32,12 +32,14 @@ public class EngineBenchmarkTest {
 
     @Test
     public void oversubscribedClientsProduceValidatedMetricsAndCleanUp() throws Exception {
+        ConcurrentQueryRanges.TitleRange earlyRange = ConcurrentQueryRanges.get(0);
+        ConcurrentQueryRanges.TitleRange middleRange = ConcurrentQueryRanges.get(1);
         EngineBenchmark.Config config = new EngineBenchmark.Config(
                 List.of(
                         new EngineBenchmark.Workload(
-                                "early titles", "carmencita", "carmencita-0099"),
+                                "early titles", earlyRange.start(), earlyRange.end()),
                         new EngineBenchmark.Workload(
-                                "middle titles", "carmencita-0100", "carmencita-0299")),
+                                "middle titles", middleRange.start(), middleRange.end())),
                 18, // bufferSize
                 2, // maxConcurrent
                 4, // clients

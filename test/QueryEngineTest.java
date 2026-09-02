@@ -33,17 +33,6 @@ public class QueryEngineTest {
 	// pages plus one transient scan/index pin, i.e. exactly 9.
 	private static final int QUERY_FRAME_BUDGET = 9;
 
-	private static final String[][] RANGES = {
-			{"carmencita", "carmencita-0099"},
-			{"carmencita-0100", "carmencita-0299"},
-			{"carmencita-0200", "carmencita-0399"},
-			{"carmencita-0350", "carmencita-0549"},
-			{"carmencita-1000", "carmencita-1499"},
-			{"carmencita-1250", "carmencita-1749"},
-			{"carmencita-2000", "carmencita-2199"},
-			{"carmencita-3000", "carmencita-3999"},
-	};
-
 	@TempDir
 	static Path tempDir;
 
@@ -109,7 +98,7 @@ public class QueryEngineTest {
 		// five of them must queue; all eight must still complete correctly.
 		QueryEngine engine = new QueryEngine(27, 3);
 		assertEquals(9, engine.getFrameBudget());
-		runConcurrentlyAndAssertBaselines(engine, RANGES.length);
+		runConcurrentlyAndAssertBaselines(engine, ConcurrentQueryRanges.size());
 	}
 
 	/**
@@ -121,7 +110,8 @@ public class QueryEngineTest {
 			throws Exception {
 		List<List<String>> baselines = new ArrayList<>();
 		for (int i = 0; i < queryCount; i++) {
-			baselines.add(computeBaseline(RANGES[i][0], RANGES[i][1], useIndexFor(i)));
+			ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(i);
+			baselines.add(computeBaseline(range.start(), range.end(), useIndexFor(i)));
 		}
 
 		ExecutorService pool = Executors.newFixedThreadPool(queryCount);
@@ -130,9 +120,10 @@ public class QueryEngineTest {
 			for (int i = 0; i < queryCount; i++) {
 				final int q = i;
 				futures.add(pool.submit(() -> {
+					ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(q);
 					Path out = tempDir.resolve(
 							"engine-" + q + "-" + System.nanoTime() + ".csv");
-					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					engine.runQuery(range.start(), range.end(), useIndexFor(q), out);
 					return SequentialBaselines.sortedRows(out);
 				}));
 			}
