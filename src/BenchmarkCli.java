@@ -3,6 +3,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,21 +11,22 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-final class BenchmarkCli {
+public final class BenchmarkCli {
 
     private BenchmarkCli() {
     }
 
-    static void main(String[] args) {
+    public static void main(String[] args) {
         if (args.length == 1 && "--help".equals(args[0])) {
             printUsage(System.err);
             return;
         }
         try {
-            EngineBenchmark.Config config = parseConfig(args);
-            EngineBenchmark.RunSummary summary = EngineBenchmark.run(config);
-            printMetrics(summary, System.err);
+            CliConfig config = parseConfig(args);
+            EngineBenchmark.RunSummary summary = EngineBenchmark.run(config.benchmark());
+            writeMetrics(summary, config.resultFile());
             if (!summary.successful()) {
+                printFailures(summary, System.err);
                 System.exit(1);
             }
         } catch (Exception failure) {
@@ -34,6 +36,7 @@ final class BenchmarkCli {
     }
 
     static void printMetrics(EngineBenchmark.RunSummary summary, PrintStream out) {
+        out.println("REDB_ENGINE_PROTOCOL version=1");
         for (EngineBenchmark.QueryMetric query : summary.queries()) {
             out.printf(
                     "REDB_ENGINE_QUERY task_id=%d workload_index=%d repetition=%d "
@@ -47,11 +50,6 @@ final class BenchmarkCli {
                     query.clientLatencyNanos(),
                     query.admissionWaitNanos(),
                     query.executionNanos());
-            if (!query.successful()) {
-                out.printf(
-                        "EngineBenchmark task %d failed: %s%n",
-                        query.taskId(), query.failureDetail());
-            }
         }
 
         EngineBenchmark.Config config = summary.config();
@@ -84,7 +82,31 @@ final class BenchmarkCli {
                 summary.residualBufferFileIds());
     }
 
-    private static EngineBenchmark.Config parseConfig(String[] args) throws IOException {
+    private static void printFailures(EngineBenchmark.RunSummary summary, PrintStream out) {
+        for (EngineBenchmark.QueryMetric query : summary.queries()) {
+            if (!query.successful()) {
+                out.printf(
+                        "EngineBenchmark task %d failed: %s%n",
+                        query.taskId(), query.failureDetail());
+            }
+        }
+    }
+
+    private static void writeMetrics(
+            EngineBenchmark.RunSummary summary, Path resultFile) throws IOException {
+        try (PrintStream out = new PrintStream(
+                Files.newOutputStream(
+                        resultFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
+                false,
+                StandardCharsets.UTF_8)) {
+            printMetrics(summary, out);
+            if (out.checkError()) {
+                throw new IOException("failed to write result file: " + resultFile);
+            }
+        }
+    }
+
+    private static CliConfig parseConfig(String[] args) throws IOException {
         Map<String, String> values = new HashMap<>();
         boolean useIndex = false;
         for (int i = 0; i < args.length; i++) {
@@ -115,7 +137,8 @@ final class BenchmarkCli {
                 "--clients",
                 "--repetitions",
                 "--warmups",
-                "--output-dir");
+                "--output-dir",
+                "--result-file");
         for (String option : values.keySet()) {
             if (!knownOptions.contains(option)) {
                 throw new IllegalArgumentException("unknown option: " + option);
@@ -123,7 +146,7 @@ final class BenchmarkCli {
         }
 
         Path workloadPath = Path.of(required(values, "--workload"));
-        return new EngineBenchmark.Config(
+        EngineBenchmark.Config benchmark = new EngineBenchmark.Config(
                 readWorkloads(workloadPath),
                 parseInteger(values, "--buffer-size"),
                 parseInteger(values, "--max-concurrent"),
@@ -132,6 +155,7 @@ final class BenchmarkCli {
                 parseInteger(values, "--warmups"),
                 useIndex,
                 Path.of(required(values, "--output-dir")));
+        return new CliConfig(benchmark, Path.of(required(values, "--result-file")));
     }
 
     private static String required(Map<String, String> values, String option) {
@@ -213,6 +237,10 @@ final class BenchmarkCli {
         out.println("  --workload <name,start_range,end_range CSV> \\");
         out.println("  --buffer-size <frames> --max-concurrent <permits> \\");
         out.println("  --clients <threads> --repetitions <count> --warmups <count> \\");
-        out.println("  [--index] --output-dir <result-file directory>");
+        out.println("  [--index] --output-dir <query-result directory> \\");
+        out.println("  --result-file <metrics file>");
+    }
+
+    private record CliConfig(EngineBenchmark.Config benchmark, Path resultFile) {
     }
 }

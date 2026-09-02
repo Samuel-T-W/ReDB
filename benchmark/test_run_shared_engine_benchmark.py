@@ -1,0 +1,136 @@
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from run_shared_engine_benchmark import (
+    DEFAULT_WORKLOAD,
+    MATRIX,
+    repo_root_from_script,
+    run_benchmark,
+)
+from workload import read_workload
+
+
+class SharedEngineBenchmarkRunnerTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name).resolve()
+        self.workload = self.root / "workload.csv"
+        self.workload.write_text(
+            "name,start_range,end_range\nA,a,b\nB,c,d\nC,e,f\n",
+            encoding="utf-8")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_default_manifest_contains_four_cyclic_copies(self):
+        rows = read_workload(DEFAULT_WORKLOAD)
+
+        self.assertEqual(12, len(rows))
+        self.assertEqual(
+            ["small_a_range", "medium_m_range", "medium_t_range"] * 4,
+            [row[0] for row in rows])
+
+    def test_derives_repo_root_from_benchmark_script_path(self):
+        repository = self.root / "repository"
+        benchmark = repository / "benchmark"
+        benchmark.mkdir(parents=True)
+        (repository / "pom.xml").touch()
+
+        self.assertEqual(repository, repo_root_from_script(benchmark / "runner.py"))
+
+    def test_reports_broken_benchmark_script_layout(self):
+        misplaced = self.root / "one" / "two" / "runner.py"
+        misplaced.parent.mkdir(parents=True)
+
+        with self.assertRaisesRegex(
+                FileNotFoundError,
+                "script path no longer matches <repo>/benchmark/<script>"):
+            repo_root_from_script(misplaced)
+
+    def test_wires_build_and_fixed_matrix_commands(self):
+        output = self.root / "run"
+
+        with patch(
+                "run_shared_engine_benchmark.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0)) as runner, patch(
+                "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
+                "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
+                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer, patch(
+                "run_shared_engine_benchmark.run_monitored_java") as java_runner:
+            writer.side_effect = lambda *_: self.assertEqual(3, parser.call_count)
+            metadata_writer.side_effect = lambda *_: self.assertEqual(1, writer.call_count)
+            successful = run_benchmark(self.workload, output, False, self.root)
+
+        self.assertEqual(1, runner.call_count)
+        self.assertEqual(["mvn", "-q", "-DskipTests", "compile"], runner.call_args_list[0].args[0])
+        self.assertEqual(3, parser.call_count)
+        writer.assert_called_once()
+        self.assertEqual(3, len(writer.call_args.args[2]))
+        self.assertTrue(all(
+            metrics is parser.return_value for metrics in writer.call_args.args[2]))
+        metadata_writer.assert_called_once_with(output, self.root, False)
+        self.assertEqual(self.workload.read_bytes(), (output / "workload.csv").read_bytes())
+        self.assertEqual(
+            [output / f"concurrency-{concurrency}-buffer-{buffer}" for concurrency, _, buffer in MATRIX],
+            successful)
+        for call, (concurrency, clients, buffer) in zip(java_runner.call_args_list, MATRIX):
+            config = output / f"concurrency-{concurrency}-buffer-{buffer}"
+            self.assertEqual(
+                [
+                    "java", "-cp", "target/classes", "EngineBenchmark",
+                    "--workload", str(output / "workload.csv"),
+                    "--buffer-size", str(buffer),
+                    "--max-concurrent", str(concurrency),
+                    "--clients", str(clients),
+                    "--repetitions", "5",
+                    "--warmups", "1",
+                    "--output-dir", str(config),
+                    "--result-file", str(config / "engine.metrics"),
+                ],
+                call.args[0])
+            self.assertEqual((self.root, config), call.args[1:])
+
+    def test_fails_fast_and_preserves_failed_config(self):
+        failure = subprocess.CalledProcessError(1, ["java"])
+        output = self.root / "failed-run"
+
+        with patch(
+                "run_shared_engine_benchmark.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0)) as runner, patch(
+                "run_shared_engine_benchmark.parse_metrics_file") as parser, patch(
+                "run_shared_engine_benchmark.write_analysis_csvs") as writer, patch(
+                "run_shared_engine_benchmark.write_run_metadata") as metadata_writer:
+            with patch(
+                    "run_shared_engine_benchmark.run_monitored_java",
+                    side_effect=failure) as java_runner:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_benchmark(self.workload, output, False, self.root)
+
+        self.assertEqual(1, runner.call_count)
+        self.assertEqual(1, java_runner.call_count)
+        parser.assert_not_called()
+        writer.assert_not_called()
+        metadata_writer.assert_not_called()
+        failed = output / "concurrency-1-buffer-20"
+        self.assertFalse((output / "concurrency-2-buffer-40").exists())
+        self.assertFalse((output / "queries.csv").exists())
+        self.assertFalse((output / "repetitions.csv").exists())
+        self.assertFalse((output / "summary.csv").exists())
+        self.assertFalse((output / "metadata.json").exists())
+
+    def test_rejects_existing_output_directory(self):
+        output = self.root / "existing"
+        output.mkdir()
+
+        with patch("run_shared_engine_benchmark.subprocess.run") as runner:
+            with self.assertRaises(FileExistsError):
+                run_benchmark(self.workload, output, False, self.root)
+
+        runner.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

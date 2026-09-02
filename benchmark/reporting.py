@@ -91,10 +91,11 @@ def append_csv(
 def summarize(
     rows: Sequence[ResultRow],
     concurrency: int,
+    repetition: int,
     makespan_seconds: float,
     group_metrics: GroupMetrics,
 ) -> SummaryRow:
-    """Aggregate raw query rows into one summary for a concurrency level."""
+    """Aggregate raw query rows into one summary for a single measured repetition."""
     successful = [row for row in rows if row["status"] == "ok"]
     latencies = [row["query_elapsed_ms"] for row in successful]
     peak_rss_values = present_values(successful, "peak_rss_bytes")
@@ -104,6 +105,7 @@ def summarize(
     major_fault_values = present_values(successful, "major_faults")
     return {
         "concurrency": concurrency,
+        "repetition": repetition,
         "queries": len(rows),
         "successful": len(successful),
         "failed": len(rows) - len(successful),

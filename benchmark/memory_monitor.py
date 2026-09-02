@@ -5,6 +5,8 @@ resident memory across several concurrent query processes. This monitor polls
 that aggregate (and per-worker peaks) on a background thread.
 """
 
+from __future__ import annotations
+
 import platform
 import subprocess
 import threading
