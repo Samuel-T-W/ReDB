@@ -13,6 +13,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -39,6 +40,7 @@ public class BufferManager {
 	// a victim already claimed in EVICTING, so no other thread can pin or
 	// re-evict it while this thread drops globalLock to flush.
 	private final ClockReplacer clockReplacer;
+	private final AtomicInteger freeFrames = new AtomicInteger();
 
 	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
 	// (pin counts, dirty flags, contents). Page loads and dirty eviction
@@ -73,13 +75,14 @@ public class BufferManager {
 		this.catalog = new ConcurrentHashMap<>();
 
 		initializeBufferManager();
-		this.clockReplacer = new ClockReplacer(frameStates);
+		this.clockReplacer = new ClockReplacer(frameStates, freeFrames);
 	}
 
 	private void initializeBufferManager() {
-		// FREE is the pool's only record of a frame being available
+		// FREE is the pool's only record of a frame being available; the shared
+		// count only lets the replacer skip a sweep it knows would find nothing
 		for (int i = 0; i < bufferSize; i++) {
-			frameStates[i] = new FrameState();
+			frameStates[i] = new FrameState(freeFrames);
 		}
 	}
 

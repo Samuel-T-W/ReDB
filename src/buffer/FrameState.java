@@ -1,5 +1,6 @@
 package buffer;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -51,14 +52,34 @@ public final class FrameState {
 
 	private final AtomicLong word;
 
+	/**
+	 * Pool-wide count of frames at FREE, shared by every state in one pool, or
+	 * null for a state that stands alone. Moved in the same two methods that
+	 * move the word into and out of FREE, so it cannot drift from the words.
+	 */
+	private final AtomicInteger freeFrames;
+
 	/** Creates a frame state at FREE, pin 0, unreferenced, version 0. */
 	public FrameState() {
-		this(State.FREE, 0L, false, 0L);
+		this(State.FREE, 0L, false, 0L, null);
+	}
+
+	/** Creates a FREE frame state that counts itself in {@code freeFrames}. */
+	public FrameState(AtomicInteger freeFrames) {
+		this(State.FREE, 0L, false, 0L, freeFrames);
 	}
 
 	/** Creates a frame state with the given fields already set. */
 	public FrameState(State state, long pinCount, boolean referenced, long version) {
+		this(state, pinCount, referenced, version, null);
+	}
+
+	private FrameState(State state, long pinCount, boolean referenced, long version, AtomicInteger freeFrames) {
 		this.word = new AtomicLong(encode(state, pinCount, referenced, version));
+		this.freeFrames = freeFrames;
+		if (freeFrames != null && state == State.FREE) {
+			freeFrames.incrementAndGet();
+		}
 	}
 
 	// ---------------------------------------------------------------- pinning
@@ -198,7 +219,13 @@ public final class FrameState {
 
 	/** FREE to LOADING. */
 	public boolean tryBeginLoad() {
-		return transition(State.FREE, State.LOADING);
+		if (!transition(State.FREE, State.LOADING)) {
+			return false;
+		}
+		if (freeFrames != null) {
+			freeFrames.decrementAndGet();
+		}
+		return true;
 	}
 
 	/** LOADING to VALID. */
@@ -221,6 +248,9 @@ public final class FrameState {
 			}
 			long next = encode(State.FREE, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
 			if (word.compareAndSet(cur, next)) {
+				if (freeFrames != null) {
+					freeFrames.incrementAndGet();
+				}
 				return true;
 			}
 		}

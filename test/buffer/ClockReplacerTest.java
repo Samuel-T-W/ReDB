@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
@@ -393,5 +394,68 @@ public class ClockReplacerTest {
 		Set<Integer> gap = new TreeSet<>(expected);
 		gap.removeAll(actual);
 		return gap;
+	}
+
+	// ------------------------------------------------------ free-frame count
+
+	private static FrameState[] countedFreePool(int size, AtomicInteger freeFrames) {
+		FrameState[] frames = new FrameState[size];
+		for (int i = 0; i < size; i++) {
+			frames[i] = new FrameState(freeFrames);
+		}
+		return frames;
+	}
+
+	@Test
+	public void claimFreeHandsOutEveryFreeFrameThenStopsSweepingOnceThePoolIsFull() {
+		AtomicInteger freeFrames = new AtomicInteger();
+		FrameState[] frames = countedFreePool(3, freeFrames);
+		ClockReplacer clock = new ClockReplacer(frames, freeFrames);
+		assertEquals(3, freeFrames.get());
+
+		assertEquals(OptionalInt.of(0), clock.claimFree());
+		assertEquals(OptionalInt.of(1), clock.claimFree());
+		assertEquals(OptionalInt.of(2), clock.claimFree());
+		assertEquals(0, freeFrames.get());
+		assertEquals(3, clock.freeSweeps(), "one sweep per frame handed out");
+
+		for (int miss = 0; miss < 1000; miss++) {
+			assertEquals(OptionalInt.empty(), clock.claimFree());
+		}
+		assertEquals(3, clock.freeSweeps(), "a full pool must be answered without probing a single frame");
+	}
+
+	@Test
+	public void frameReturnedToFreeAfterThePoolFilledIsFoundByTheNextClaim() {
+		AtomicInteger freeFrames = new AtomicInteger();
+		FrameState[] frames = countedFreePool(3, freeFrames);
+		ClockReplacer clock = new ClockReplacer(frames, freeFrames);
+		for (int i = 0; i < 3; i++) {
+			assertTrue(clock.claimFree().isPresent());
+		}
+		assertEquals(OptionalInt.empty(), clock.claimFree());
+
+		// frame 1 goes through its whole life and is recycled back to FREE
+		assertTrue(frames[1].finishLoad());
+		assertTrue(frames[1].tryClaimForEviction());
+		assertTrue(frames[1].finishEvict());
+		assertEquals(1, freeFrames.get());
+
+		assertEquals(OptionalInt.of(1), clock.claimFree(), "the recycled frame must never be stranded");
+		assertEquals(0, freeFrames.get());
+		assertEquals(4, clock.freeSweeps());
+	}
+
+	@Test
+	public void replacerWithoutASharedCountSweepsOnEveryClaim() {
+		FrameState[] frames = pool(new FrameState(), new FrameState());
+		ClockReplacer clock = new ClockReplacer(frames);
+
+		assertTrue(clock.claimFree().isPresent());
+		assertTrue(clock.claimFree().isPresent());
+		assertEquals(OptionalInt.empty(), clock.claimFree());
+		assertEquals(OptionalInt.empty(), clock.claimFree());
+
+		assertEquals(4, clock.freeSweeps(), "with nothing to consult, every call has to look");
 	}
 }

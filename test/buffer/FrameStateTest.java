@@ -476,4 +476,34 @@ public class FrameStateTest {
 			assertFalse(violation.get(), "a pin succeeded on a frame already claimed for eviction");
 		}
 	}
+
+	// ------------------------------------------------------ free-frame count
+
+	@Test
+	public void sharedFreeCountFollowsEveryEntryToAndExitFromFree() {
+		AtomicInteger freeFrames = new AtomicInteger();
+		FrameState fs = new FrameState(freeFrames);
+		assertEquals(1, freeFrames.get(), "a new FREE state counts itself");
+
+		assertTrue(fs.tryBeginLoad());
+		assertEquals(0, freeFrames.get(), "leaving FREE is counted");
+		assertFalse(fs.tryBeginLoad());
+		assertEquals(0, freeFrames.get(), "a refused claim moves nothing");
+
+		assertTrue(fs.finishLoad());
+		assertTrue(fs.tryClaimForEviction());
+		assertTrue(fs.beginFlush());
+		assertTrue(fs.abortFlush());
+		assertEquals(0, freeFrames.get(), "VALID, EVICTING and FLUSHING never touch the count");
+
+		assertTrue(fs.tryClaimForEviction());
+		assertTrue(fs.finishEvict());
+		assertEquals(1, freeFrames.get(), "returning to FREE is counted");
+		assertFalse(fs.finishEvict());
+		assertEquals(1, freeFrames.get(), "a refused recycle moves nothing");
+
+		FrameState standalone = new FrameState();
+		assertTrue(standalone.tryBeginLoad());
+		assertEquals(1, freeFrames.get(), "a state built without the count never touches it");
+	}
 }

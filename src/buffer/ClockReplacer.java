@@ -2,6 +2,7 @@ package buffer;
 
 import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Lock-free clock (second-chance) victim selector over an array of
@@ -26,12 +27,26 @@ public final class ClockReplacer {
 	private final FrameState[] frames;
 	private final AtomicInteger hand = new AtomicInteger();
 	private final AtomicInteger freeHand = new AtomicInteger();
+	// pool-wide FREE count kept by the FrameStates themselves, or null to
+	// always sweep; see claimFree
+	private final AtomicInteger freeFrames;
+	private final LongAdder freeSweeps = new LongAdder();
 
 	public ClockReplacer(FrameState[] frames) {
+		this(frames, null);
+	}
+
+	/**
+	 * @param freeFrames the count every frame in {@code frames} reports its FREE
+	 *                   entries and exits to, so a full pool is known without a
+	 *                   sweep; null makes every {@link #claimFree()} sweep
+	 */
+	public ClockReplacer(FrameState[] frames, AtomicInteger freeFrames) {
 		if (frames == null) {
 			throw new NullPointerException("frames");
 		}
 		this.frames = frames;
+		this.freeFrames = freeFrames;
 	}
 
 	/**
@@ -86,10 +101,20 @@ public final class ClockReplacer {
 	 * {@link FrameState#tryBeginLoad()}, never a read followed by a write, so of
 	 * two threads seeing one frame as FREE exactly one leaves with it.
 	 *
+	 * <p>Once the pool has filled, no frame is FREE for the rest of a run except
+	 * the victim each eviction recycles, so a sweep here would probe every frame
+	 * on every miss and find nothing: O(pool) work per page read. The shared
+	 * count short-circuits that. It is exact whenever it reads zero, so a frame
+	 * that returns to FREE is always found by the next claim, never stranded.
+	 *
 	 * @return the index of a frame now owned by this caller in state
 	 *         {@link FrameState.State#LOADING}, or empty if no frame was free.
 	 */
 	public OptionalInt claimFree() {
+		if (freeFrames != null && freeFrames.get() <= 0) {
+			return OptionalInt.empty();
+		}
+		freeSweeps.increment();
 		final int n = frames.length;
 		int start = freeHand.get();
 		for (int offset = 0; offset < n; offset++) {
@@ -102,6 +127,11 @@ public final class ClockReplacer {
 			}
 		}
 		return OptionalInt.empty();
+	}
+
+	/** Number of {@link #claimFree()} calls that swept the pool. Exposed for tests. */
+	public long freeSweeps() {
+		return freeSweeps.sum();
 	}
 
 	/** Current hand position, normalised into the pool's index range. Exposed for tests. */
