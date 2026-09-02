@@ -114,8 +114,19 @@ public class BufferManager {
 	 *         manager.
 	 */
 	public Page getPage(String fileId, int pageId) throws IOException {
+		return pinPage(fileId, pageId).page();
+	}
+
+	/**
+	 * Pins the page and returns a handle that names that pin by frame and
+	 * version. {@link #getPage} unwraps the page so existing key-based callers
+	 * keep working; unpin still goes by key under globalLock. The handle is
+	 * what later lets unpin target this incarnation instead of whatever page
+	 * now occupies the key.
+	 */
+	public PageHandle pinPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		Page hit = tryPinHit(pageKey);
+		PageHandle hit = tryPinHit(pageKey);
 		if (hit != null) {
 			return hit;
 		}
@@ -128,7 +139,7 @@ public class BufferManager {
 					Frame frame = bufferPool[frameIndex];
 					if (frame.hasPage()) {
 						frame.pin();
-						return frame.page;
+						return bindHandle(frame, pageKey);
 					}
 					awaitFlushSettled();
 					continue;
@@ -193,7 +204,7 @@ public class BufferManager {
 					Frame frame = bufferPool[claimed];
 					publishValid(frame, pageKey, page);
 					frame.pin();
-					return page;
+					return bindHandle(frame, pageKey);
 				} catch (RuntimeException e) {
 					pageTable.remove(pageKey, claimed);
 					releaseClaim(claimed, e);
@@ -231,7 +242,11 @@ public class BufferManager {
 	 * safe to touch, because the only field read before the pin is {@code state},
 	 * which is final.
 	 */
-	private Page tryPinHit(PageKey pageKey) {
+	private PageHandle bindHandle(Frame frame, PageKey key) {
+		return new PageHandle(frame.frameIndex, frame.state.version(), key, frame.page);
+	}
+
+	private PageHandle tryPinHit(PageKey pageKey) {
 		Integer frameIndex = pageTable.get(pageKey);
 		if (frameIndex == null) {
 			return null;
@@ -251,7 +266,7 @@ public class BufferManager {
 		}
 		if (pageKey.equals(frame.pageKey)) {
 			lockFreeHitCount.increment();
-			return frame.page;
+			return new PageHandle(frame.frameIndex, version, pageKey, frame.page);
 		}
 		// The index was stale and this frame belongs to another page. Hand the
 		// pin straight back rather than serving its holder someone else's data.
