@@ -9,6 +9,15 @@ public class Main {
     }
 
     public static void main(String[] args) throws Exception {
+        SentryBootstrap.initIfConfigured();
+        try {
+            run(args);
+        } finally {
+            SentryBootstrap.close();
+        }
+    }
+
+    private static void run(String[] args) throws Exception {
         if (args.length == 0) {
             System.err.println("Usage: pre_process | run_query <start> <end> <buffer_size> [--index] [--metrics]");
             System.exit(1);

@@ -1,6 +1,8 @@
 import buffer.BufferManager;
+import buffer.SentryBufferPoolReporter;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -15,6 +17,9 @@ import java.util.concurrent.Semaphore;
  * query to its peak is only requested while it holds at most budget - 1 frames.
  * So under admission control the pool always has a free or evictable frame for
  * whichever query asks next, even when budgets exactly cover the pool.
+ *
+ * <p>Eviction stalls wait up to 30 seconds for an unpin, then fail that query
+ * without taking down the process.
  */
 public class QueryEngine {
 
@@ -29,6 +34,10 @@ public class QueryEngine {
     private final int frameBudget;
     private final Semaphore admission;
 
+    /**
+     * Builds a shared engine over a {@link BufferManager} that waits up to 30s
+     * for an unpin on eviction stall and reports stalls to Sentry when configured.
+     */
     public QueryEngine(int bufferSize, int maxConcurrentQueries) {
         if (maxConcurrentQueries < 1) {
             throw new IllegalArgumentException(
@@ -41,7 +50,8 @@ public class QueryEngine {
                             + budget + " (bufferSize " + bufferSize
                             + " / maxConcurrentQueries " + maxConcurrentQueries + ")");
         }
-        this.bm = new BufferManager(bufferSize);
+        SentryBootstrap.initIfConfigured();
+        this.bm = new BufferManager(bufferSize, new SentryBufferPoolReporter(), Duration.ofSeconds(30));
         this.frameBudget = budget;
         this.admission = new Semaphore(maxConcurrentQueries);
         RunQuery.registerCatalog(bm);
