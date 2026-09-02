@@ -191,8 +191,7 @@ public class BufferManager {
 				}
 				try {
 					Frame frame = bufferPool[claimed];
-					frame.page = page;
-					frame.markValid();
+					publishValid(frame, pageKey, page);
 					frame.pin();
 					return page;
 				} catch (RuntimeException e) {
@@ -619,18 +618,46 @@ public class BufferManager {
 			throw new IllegalStateException("Expected Free Frame object");
 		}
 
-		// assign page to frame
-		frame.page = page;
-		frame.pageKey = pageKey;
-		frame.markValid();
+		publishValid(frame, pageKey, page);
 		if (is_pinned) {
 			frame.pin();
 		}
-
-		// add page to page table
-		pageTable.put(pageKey, frameIndex);
-
+		if (!installMapping(pageKey, frameIndex)) {
+			throw new IllegalStateException("page already resident: " + pageKey);
+		}
 		return page;
+	}
+
+	/**
+	 * Publication order for a resident frame. {@code page} and {@code pageKey}
+	 * are written first; the LOADING→VALID CAS is the publication. A lock-free
+	 * reader may examine those fields only after it has observed VALID (or
+	 * taken a pin, which requires VALID), so the writes happen-before any
+	 * unlocked use of the identity.
+	 *
+	 * <p>Installing the page-table mapping is a separate step. The load path
+	 * does it before the disk read so waiters find the LOADING frame; createPage
+	 * does it after VALID so the first unlocked lookup cannot observe a VALID
+	 * frame whose identity is still being written.
+	 */
+	void publishValid(Frame frame, PageKey key, Page page) {
+		if (key == null || page == null) {
+			throw new IllegalStateException("cannot publish a frame without a page and a key");
+		}
+		frame.page = page;
+		frame.pageKey = key;
+		frame.markValid();
+	}
+
+	/**
+	 * Makes a frame findable by key. {@code putIfAbsent} so a loser cannot
+	 * overwrite a mapping another loader already installed for this key.
+	 *
+	 * @return true if this frame is now the mapping
+	 */
+	boolean installMapping(PageKey key, int frameIndex) {
+		Integer winner = pageTable.putIfAbsent(key, frameIndex);
+		return winner == null || winner == frameIndex;
 	}
 
 	/** Read a page from disk. Overridable so tests can stall a load. */
