@@ -51,6 +51,21 @@ public class RunQuery {
 
     static final int BTREE_DEGREE = BTreeManager.maxDegree(TITLE_LEN);
 
+    /** One transient page for the scan/index operation this query is advancing. */
+    static final int WORKING_FRAMES = 1;
+
+    /** Two one-page BNL blocks plus this query's working page. */
+    static final int MIN_FRAME_BUDGET = 2 + WORKING_FRAMES;
+
+    static int blockPagesPerJoin(int frameBudget) {
+        int blockPages = (frameBudget - WORKING_FRAMES) / 2;
+        if (blockPages < 1) {
+            throw new IllegalArgumentException(
+                    "frame budget must be at least " + MIN_FRAME_BUDGET + " to run BNL join");
+        }
+        return blockPages;
+    }
+
     public static long run(
             String startRange,
             String endRange,
@@ -68,9 +83,9 @@ public class RunQuery {
      * registered here.
      *
      * @param frameBudget
-     *            Frames this query may use for its BNL blocks; it only drives the
-     *            block-size computation, not pool construction (the pool size is
-     *            whatever the injected manager was built with).
+     *            Frames reserved for this query's two BNL blocks and working page;
+     *            it only drives the block-size computation, not pool construction
+     *            (the pool size is whatever the injected manager was built with).
      */
     public static long run(
             String startRange,
@@ -79,11 +94,10 @@ public class RunQuery {
             boolean useIndex,
             BufferManager bm,
             Path outputPath) throws IOException {
-        // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
-        int N = (frameBudget - 1) / 2;
-        if (N < 1) {
-            throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
-        }
+        // WORKING_FRAMES is per query, via QueryEngine's per-query budget.
+        // Applying N = (B - 1) / 2 to the full pool would leave one leftover
+        // frame shared by every concurrent BNL inner scan.
+        int N = blockPagesPerJoin(frameBudget);
 
         QueryContext query = QueryContext.create(bm, outputPath);
         Throwable queryFailure = null;

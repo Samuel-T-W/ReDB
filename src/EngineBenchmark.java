@@ -36,9 +36,6 @@ public final class EngineBenchmark {
     private static final int STATUS_QUERY_FAILED = 1;
     private static final int STATUS_RESULT_MISMATCH = 2;
 
-    /** Smallest per-query frame budget a BNL join can run in. */
-    private static final int MIN_FRAME_BUDGET = 3;
-
     /** Loose guard on range bound length, replaced by a schema-derived limit in SAM-47. */
     private static final int MAX_RANGE_LENGTH = 100;
 
@@ -88,9 +85,9 @@ public final class EngineBenchmark {
                 throw new IllegalArgumentException("max-concurrent must be positive");
             }
             int budget = frameBudgetOf(bufferSize, maxConcurrent);
-            if (budget < MIN_FRAME_BUDGET) {
+            if (budget < RunQuery.MIN_FRAME_BUDGET) {
                 throw new IllegalArgumentException(
-                        "per-query frame budget must be at least " + MIN_FRAME_BUDGET
+                        "per-query frame budget must be at least " + RunQuery.MIN_FRAME_BUDGET
                                 + " to run BNL join, got: " + budget
                                 + " (buffer-size " + bufferSize
                                 + " / max-concurrent " + maxConcurrent + ")");
