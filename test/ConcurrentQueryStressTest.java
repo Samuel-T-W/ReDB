@@ -110,19 +110,14 @@ public class ConcurrentQueryStressTest {
 			Set<Integer> pages = pagesByRange.get(rangeIndex);
 			assertFalse(pages.isEmpty(), "range " + rangeIndex + " must cover a movie page");
 
-			Set<Integer> exclusivePages = new HashSet<>(pages);
 			for (int otherIndex = 0; otherIndex < pagesByRange.size(); otherIndex++) {
 				if (otherIndex != rangeIndex) {
-					exclusivePages.removeAll(pagesByRange.get(otherIndex));
 					assertTrue(
 							java.util.Collections.disjoint(pages, pagesByRange.get(otherIndex)),
 							"ranges " + rangeIndex + " and " + otherIndex
 									+ " must not share movie pages");
 				}
 			}
-			assertFalse(
-					exclusivePages.isEmpty(),
-					"range " + rangeIndex + " must own at least one exclusive movie page");
 		}
 	}
 

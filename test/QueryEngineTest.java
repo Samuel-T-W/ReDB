@@ -56,29 +56,36 @@ public class QueryEngineTest {
 	}
 
 	@Test
-	public void singleQueryCompletesAtMinimumFrameBudget() throws Exception {
+	public void scanAndIndexQueriesCompleteAtMinimumFrameBudget() throws Exception {
 		QueryEngine engine = new QueryEngine(RunQuery.MIN_FRAME_BUDGET, 1);
 		assertEquals(RunQuery.MIN_FRAME_BUDGET, engine.getFrameBudget());
 		assertEquals(1, RunQuery.blockPagesPerJoin(engine.getFrameBudget()));
 
-		Path out = tempDir.resolve("min-budget.csv");
-		long rows = engine.runQuery("carmencita-1000", "carmencita-1499", false, out);
-		assertTrue(rows > 0, "minimum-budget join must still produce rows");
-		assertEquals(0, engine.getBufferManager().getTotalPinCount(),
-				"all pages must be unpinned after the query closes");
+		ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(4);
+		for (boolean useIndex : new boolean[]{false, true}) {
+			Path out = tempDir.resolve("min-budget-" + useIndex + ".csv");
+			long rows = engine.runQuery(range.start(), range.end(), useIndex, out);
+			assertTrue(rows > 0, "minimum-budget join must produce rows with index=" + useIndex);
+			assertEquals(0, engine.getBufferManager().getTotalPinCount(),
+					"all pages must be unpinned after the query closes");
+		}
 	}
 
 	@Test
-	public void tightPoolReservesOneWorkingFramePerAdmittedQuery() {
-		int bufferSize = 36;
-		int maxConcurrent = 4;
-		QueryEngine engine = new QueryEngine(bufferSize, maxConcurrent);
-
-		int blockPages = RunQuery.blockPagesPerJoin(engine.getFrameBudget());
-
-		assertTrue(
-				bufferSize - (maxConcurrent * 2 * blockPages) >= maxConcurrent,
-				"both BNL blocks must leave at least one working frame per admitted query");
+	public void validPoolsReserveWorkingFramesForEveryAdmittedQuery() {
+		for (int maxConcurrent = 1; maxConcurrent <= 8; maxConcurrent++) {
+			for (int bufferSize = maxConcurrent * RunQuery.MIN_FRAME_BUDGET;
+					bufferSize <= 64;
+					bufferSize++) {
+				int budget = bufferSize / maxConcurrent;
+				int blockPages = RunQuery.blockPagesPerJoin(budget);
+				int peakPinsPerQuery = 2 * blockPages + RunQuery.WORKING_FRAMES;
+				assertTrue(
+						maxConcurrent * peakPinsPerQuery <= bufferSize,
+						"pool " + bufferSize + " with " + maxConcurrent
+								+ " permits must cover every query's peak pins");
+			}
+		}
 	}
 
 	@Test

@@ -4,8 +4,9 @@ import java.util.List;
  * Page-disjoint movie title ranges shared by concurrent-query tests.
  *
  * <p>The synthetic movie heap stores eight rows per page in CSV order. Gaps
- * between ranges keep concurrent queries from sharing an outer boundary page;
- * the BNL inner scans still contend on workedon.db and people.db from page 0.
+ * between ranges keep concurrent queries from sharing outer pages, maximizing
+ * distinct-page demand as the stricter frame-budget stress case. The BNL inner
+ * scans still exercise shared-page contention on workedon.db and people.db.
  */
 final class ConcurrentQueryRanges {
 

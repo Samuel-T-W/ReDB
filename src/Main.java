@@ -43,8 +43,9 @@ public class Main {
                     System.exit(1);
                     return;
                 }
-                if (bufferSize < 3) {
-                    System.err.println("Error: buffer_size must be at least 3 to run BNL join");
+                if (bufferSize < RunQuery.MIN_FRAME_BUDGET) {
+                    System.err.println("Error: buffer_size must be at least "
+                            + RunQuery.MIN_FRAME_BUDGET + " to run BNL join");
                     System.exit(1);
                 }
                 // Optional flags after the positional args, in any order:

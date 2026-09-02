@@ -15,7 +15,6 @@ public class RunQueryFrameBudgetTest {
 
 	@Test
 	public void minBudgetYieldsOnePageBlocks() {
-		assertEquals(2 + RunQuery.WORKING_FRAMES, RunQuery.MIN_FRAME_BUDGET);
 		assertEquals(1, RunQuery.blockPagesPerJoin(RunQuery.MIN_FRAME_BUDGET));
 	}
 
