@@ -3,8 +3,10 @@ package util.preprocessor;
 import buffer.BufferManager;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -19,6 +21,13 @@ import util.RecordUtils;
 
 public final class PreProcessorUtils {
 
+    /**
+     * How many individual skipped rows are named on stderr per file. A CSV loaded
+     * against the wrong schema can overflow on every row, and millions of warnings
+     * would bury the rest of the run; the tail is covered by the final count.
+     */
+    private static final int MAX_SKIP_WARNINGS = 20;
+
     private PreProcessorUtils() {
     }
 
@@ -28,15 +37,32 @@ public final class PreProcessorUtils {
             String fileId,
             Map<String, Integer> schema)
             throws IOException {
-        int numPages = 0;
-        Page current = bm.createPage(fileId, null);
-        numPages++;
-        GenericPage gp = new GenericPage(current, schema);
-
-        try (BufferedReader br = new BufferedReader(new FileReader(csvPath))) {
-            String line = br.readLine(); // skip header
+        try (BufferedReader br = Files.newBufferedReader(Path.of(csvPath), StandardCharsets.UTF_8)) {
+            validateHeader(csvPath, schema, br.readLine());
+            int numPages = 1;
+            Page current = bm.createPage(fileId, null);
+            GenericPage gp = new GenericPage(current, schema);
+            String line;
+            long lineNumber = 1; // the header line was just consumed
+            long skipped = 0;
             while ((line = br.readLine()) != null) {
+                lineNumber++;
                 String[] cols = parseCsvLine(line);
+
+                // A value too wide for its field is a data problem, not a load
+                // failure: skip the row, keep loading, and account for it below.
+                String overflow = describeOverflow(schema, cols);
+                if (overflow != null) {
+                    if (skipped < MAX_SKIP_WARNINGS) {
+                        System.err.println(
+                                "WARN " + csvPath + ":" + lineNumber + " skipped, " + overflow);
+                    } else if (skipped == MAX_SKIP_WARNINGS) {
+                        System.err.println(
+                                "WARN " + csvPath + ": further per-row skip warnings suppressed");
+                    }
+                    skipped++;
+                    continue;
+                }
                 GenericRecord rec = buildRecord(schema, cols);
 
                 if (gp.insertRecord(rec) == -1) {
@@ -44,15 +70,23 @@ public final class PreProcessorUtils {
                     current = bm.createPage(fileId, null);
                     numPages++;
                     gp = new GenericPage(current, schema);
-                    gp.insertRecord(rec);
+                    if (gp.insertRecord(rec) == -1) {
+                        throw new IllegalArgumentException(
+                                "Schema record is too large for an empty page: " + schema);
+                    }
                 }
                 bm.markDirty(fileId, current.getPid());
             }
-        }
 
-        bm.unpinPage(fileId, current.getPid());
-        bm.force();
-        return numPages;
+            bm.unpinPage(fileId, current.getPid());
+            bm.force();
+            if (skipped > 0) {
+                System.err.println("WARN " + csvPath + ": skipped " + skipped
+                        + " row(s) exceeding schema field widths; " + (lineNumber - 1 - skipped)
+                        + " row(s) loaded");
+            }
+            return numPages;
+        }
     }
 
     public static void resetFile(String path) throws IOException {
@@ -93,6 +127,24 @@ public final class PreProcessorUtils {
         return RecordUtils.toFixedBytes(s, length);
     }
 
+    /**
+     * Describes the first field whose value will not fit its fixed-length slot, or
+     * null when the row is loadable.
+     */
+    private static String describeOverflow(Map<String, Integer> schema, String[] cols) {
+        int i = 0;
+        for (Map.Entry<String, Integer> field : schema.entrySet()) {
+            String val = i < cols.length ? cols[i] : "";
+            int byteCount = val.getBytes(StandardCharsets.UTF_8).length;
+            if (byteCount > field.getValue()) {
+                return field.getKey() + " requires " + byteCount
+                        + " UTF-8 bytes but field allows " + field.getValue();
+            }
+            i++;
+        }
+        return null;
+    }
+
     private static GenericRecord buildRecord(Map<String, Integer> schema, String[] cols) {
         GenericRecord rec = GenericRecord.create(schema);
         int i = 0;
@@ -102,6 +154,20 @@ public final class PreProcessorUtils {
             i++;
         }
         return rec;
+    }
+
+    private static void validateHeader(
+            String csvPath, Map<String, Integer> schema, String headerLine) throws IOException {
+        if (headerLine == null) {
+            throw new IOException(csvPath + " is empty");
+        }
+        String[] actual = parseCsvLine(headerLine);
+        List<String> expected = new ArrayList<>(schema.keySet());
+        if (actual.length > expected.size()
+                || !expected.subList(0, actual.length).equals(Arrays.asList(actual))) {
+            throw new IOException(
+                    csvPath + " header must be a prefix of " + expected + ", got " + Arrays.toString(actual));
+        }
     }
 
     private static String[] parseCsvLine(String line) {

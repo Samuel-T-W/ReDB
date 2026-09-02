@@ -1,6 +1,12 @@
+import java.nio.charset.StandardCharsets;
 import util.Metrics;
 
 public class Main {
+
+    /** Bounds are measured the way the record encoder measures them: UTF-8 bytes. */
+    private static int utf8Length(String value) {
+        return value.getBytes(StandardCharsets.UTF_8).length;
+    }
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
@@ -11,21 +17,22 @@ public class Main {
         switch (args[0]) {
             case "pre_process" -> PreProcessor.run();
             case "run_query" -> {
+                int titleLen = RunQuery.MOVIES_SCHEMA.get("title");
                 if (args.length < 4) {
                     System.err.println("Usage: run_query <start_range> <end_range> <buffer_size>");
-                    System.err.println("  start_range  lower bound title (inclusive), up to 30 chars");
-                    System.err.println("  end_range    upper bound title (inclusive), up to 30 chars");
+                    System.err.println("  start_range  lower bound title (inclusive), up to " + titleLen + " bytes");
+                    System.err.println("  end_range    upper bound title (inclusive), up to " + titleLen + " bytes");
                     System.err.println("  buffer_size  number of buffer frames (positive integer)");
                     System.exit(1);
                 }
                 String start = args[1];
                 String end = args[2];
-                if (start.length() > 30) {
-                    System.err.println("Error: start_range exceeds max title length of 30 characters");
+                if (utf8Length(start) > titleLen) {
+                    System.err.println("Error: start_range exceeds max title length of " + titleLen + " bytes");
                     System.exit(1);
                 }
-                if (end.length() > 30) {
-                    System.err.println("Error: end_range exceeds max title length of 30 characters");
+                if (utf8Length(end) > titleLen) {
+                    System.err.println("Error: end_range exceeds max title length of " + titleLen + " bytes");
                     System.exit(1);
                 }
                 int bufferSize;

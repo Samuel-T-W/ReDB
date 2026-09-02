@@ -53,6 +53,17 @@ public class InternalPage implements IndexPage {
 	/** Sentinel value meaning "no parent" (root node). */
 	public static final int NO_PARENT = -1;
 
+	/**
+	 * Largest degree whose keys and child pointers still fit in one page for the
+	 * given key size, mirroring the bound enforced by the constructors.
+	 *
+	 * @return Max children per internal page, or 0 if even degree 1 will not fit.
+	 */
+	public static int maxDegree(int keySize) {
+		int usable = PAGE_SIZE - Integer.BYTES - HEADER_SIZE - Integer.BYTES;
+		return usable / (keySize + Integer.BYTES);
+	}
+
 	// -----------------------------------------------------------------------
 	// Fields
 	// -----------------------------------------------------------------------
