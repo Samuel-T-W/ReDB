@@ -35,10 +35,11 @@ public class QueryEngine {
                     "maxConcurrentQueries must be positive, got: " + maxConcurrentQueries);
         }
         int budget = bufferSize / maxConcurrentQueries;
-        if (budget < 3) {
+        if (budget < RunQuery.MIN_FRAME_BUDGET) {
             throw new IllegalArgumentException(
-                    "per-query frame budget must be at least 3 to run BNL join, got: "
-                            + budget + " (bufferSize " + bufferSize
+                    "per-query frame budget must be at least "
+                            + RunQuery.MIN_FRAME_BUDGET
+                            + " to run BNL join, got: " + budget + " (bufferSize " + bufferSize
                             + " / maxConcurrentQueries " + maxConcurrentQueries + ")");
         }
         this.bm = new BufferManager(bufferSize);
