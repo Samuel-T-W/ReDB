@@ -68,6 +68,59 @@ public class BufferManagerHandleTest {
 	}
 
 	@Test
+	public void handleUnpinReleasesExactlyThatPin() throws Exception {
+		String file = fingerprintFile(1);
+		BufferManager bm = new BufferManager(1);
+		bm.register(new TableEntry(file, SCHEMA));
+
+		PageHandle first = bm.pinPage(file, 0);
+		PageHandle second = bm.pinPage(file, 0);
+		assertEquals(2, bm.getPinCount(file, 0));
+
+		bm.unpinPage(first);
+		assertTrue(first.isReleased());
+		assertEquals(1, bm.getPinCount(file, 0));
+		assertThrows(IllegalStateException.class, () -> bm.unpinPage(first),
+				"a second unpin of the same handle must not drop the sibling pin");
+		assertEquals(1, bm.getPinCount(file, 0));
+
+		bm.unpinPage(second);
+		assertEquals(0, bm.getTotalPinCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
+	public void staleHandleCannotStealARecycledFramePin() throws Exception {
+		String file = fingerprintFile(2);
+		BufferManager bm = new BufferManager(1);
+		bm.register(new TableEntry(file, SCHEMA));
+
+		PageHandle original = bm.pinPage(file, 0);
+		int frameIndex = original.frameIndex();
+		long oldVersion = original.version();
+		PageKey key = original.key();
+		bm.unpinPage(original);
+
+		bm.getPage(file, 1);
+		bm.unpinPage(file, 1);
+
+		PageHandle reloaded = bm.pinPage(file, 0);
+		assertEquals(frameIndex, reloaded.frameIndex());
+		assertNotEquals(oldVersion, reloaded.version());
+		assertEquals(1, bm.getPinCount(file, 0));
+
+		PageHandle forged = new PageHandle(frameIndex, oldVersion, key, reloaded.page());
+		assertThrows(IllegalStateException.class, () -> bm.unpinPage(forged),
+				"unpinning a recycled version must not drop the new pin");
+		assertEquals(1, bm.getPinCount(file, 0));
+		assertEquals((byte) 0, reloaded.page().getByteArray()[0]);
+
+		bm.unpinPage(reloaded);
+		assertEquals(0, bm.getTotalPinCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
 	public void getPageStillUnwrapsThePinnedPage() throws Exception {
 		String file = fingerprintFile(1);
 		BufferManager bm = new BufferManager(1);

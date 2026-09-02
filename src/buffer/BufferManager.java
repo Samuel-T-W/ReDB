@@ -411,6 +411,35 @@ public class BufferManager {
 		}
 	}
 
+	/**
+	 * Releases the pin named by {@code handle}. Still under globalLock so this
+	 * can land on the existing locked path before unpin itself goes lock-free.
+	 * The handle is marked released first: two unpins of the same token must
+	 * not decrement a sibling holder's pin on this incarnation.
+	 */
+	public void unpinPage(PageHandle handle) {
+		if (!handle.markReleased()) {
+			throw new IllegalStateException("handle already unpinned: " + handle);
+		}
+		globalLock.lock();
+		try {
+			releaseHandle(handle);
+		} finally {
+			globalLock.unlock();
+		}
+	}
+
+	private void releaseHandle(PageHandle handle) {
+		int index = handle.frameIndex();
+		if (index >= bufferPool.length) {
+			throw new IllegalStateException("stale handle: " + handle);
+		}
+		Frame frame = bufferPool[index];
+		if (frame == null || !frame.state.unpin(handle.version())) {
+			throw new IllegalStateException("stale handle: " + handle);
+		}
+	}
+
 	/** Forces all dirty pages currently in memory to be written back to disk. */
 	public void force() throws IOException {
 		globalLock.lock();
