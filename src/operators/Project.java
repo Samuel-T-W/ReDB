@@ -1,6 +1,7 @@
 package operators;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
@@ -106,7 +107,7 @@ public class Project implements Operator {
     }
 
     private void materialize() {
-        RawPage currentRaw = null;
+        PageHandle current = null;
         boolean childOpened = false;
         RuntimeException failure = null;
         try {
@@ -123,25 +124,24 @@ public class Project implements Operator {
             child.open();
             childOpened = true;
 
-            currentRaw = bm.createPage(tempFileId, null);
-            GenericPage currentPage = new GenericPage(currentRaw, outputSchema);
+            current = bm.createPinnedPage(tempFileId, null);
+            GenericPage currentPage = new GenericPage((RawPage) current.page(), outputSchema);
 
             GenericRecord rec;
             while ((rec = child.next()) != null) {
                 GenericRecord projected = project(rec);
                 if (currentPage.insertRecord(projected) == -1) {
-                    bm.markDirty(tempFileId, currentRaw.getPid());
-                    bm.unpinPage(tempFileId, currentRaw.getPid());
-                    currentRaw = null;
-                    currentRaw = bm.createPage(tempFileId, null);
-                    currentPage = new GenericPage(currentRaw, outputSchema);
+                    bm.markDirty(tempFileId, current.pageId());
+                    bm.unpinPage(current);
+                    current = bm.createPinnedPage(tempFileId, null);
+                    currentPage = new GenericPage((RawPage) current.page(), outputSchema);
                     currentPage.insertRecord(projected);
                 }
             }
-            bm.markDirty(tempFileId, currentRaw.getPid());
+            bm.markDirty(tempFileId, current.pageId());
             bm.force();
-            bm.unpinPage(tempFileId, currentRaw.getPid());
-            currentRaw = null;
+            bm.unpinPage(current);
+            current = null;
 
             child.close();
             childOpened = false;
@@ -156,9 +156,9 @@ public class Project implements Operator {
             throw e;
         } finally {
             if (failure != null) {
-                if (currentRaw != null) {
+                if (current != null) {
                     try {
-                        bm.unpinPage(tempFileId, currentRaw.getPid());
+                        bm.unpinPage(current);
                     } catch (RuntimeException cleanupFailure) {
                         failure.addSuppressed(cleanupFailure);
                     }
