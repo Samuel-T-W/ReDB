@@ -15,6 +15,175 @@ mvn test -Dtest=MovieIDRangeQueryPerformanceTest
 rm test/btree/MovieIDRangeQueryPerformanceTest.java
 ```
 
+# Shared-engine concurrent benchmark
+
+The shared-engine benchmark runs the tracked 12-query `benchmark/concurrency_workload.csv` against one `QueryEngine` JVM for each fixed concurrency configuration.
+The fixed matrix is `(max_concurrent, clients, buffer_size) = (1, 1, 20), (2, 2, 40), (4, 4, 80)` with one warmup, five measured repetitions, and no index.
+
+Create the database files, then run the harness from anywhere inside the repository:
+
+```bash
+./run.sh pre_process
+python3 benchmark/run_shared_engine_benchmark.py
+```
+
+Use `--skip-build` after compiling, `--workload <path>` to supply another manifest with the same exact CSV header, or `--output-dir <new-path>` to choose the run directory.
+The output directory must not already exist.
+By default, each run uses a new UTC identifier under `benchmark/results/shared-engine/`.
+
+```text
+benchmark/results/shared-engine/<UTC-run-id>/
+├── workload.csv
+├── queries.csv
+├── repetitions.csv
+├── summary.csv
+├── metadata.json
+├── concurrency-1-buffer-20/
+│   ├── engine.metrics
+│   ├── engine.stderr.log
+│   └── resources.json
+├── concurrency-2-buffer-40/
+│   ├── engine.metrics
+│   ├── engine.stderr.log
+│   └── resources.json
+└── concurrency-4-buffer-80/
+    ├── engine.metrics
+    ├── engine.stderr.log
+    └── resources.json
+```
+
+`workload.csv` is the exact copied manifest used by the run.
+Each `engine.metrics` contains the Java line protocol, each `engine.stderr.log` preserves Java diagnostics, and each `resources.json` contains sampled process and host resource summaries.
+`queries.csv` contains one row per measured query, `repetitions.csv` contains one row per configuration repetition, and `summary.csv` contains one row per configuration.
+`metadata.json` records repository, Java, platform, and build provenance after the full run succeeds.
+
+# Historical multi-JVM results
+
+The pre-shared-engine result artifacts and analysis figures are preserved under `benchmark/results/legacy-multi-jvm/`.
+They were copied byte-for-byte from the pre-existing ignored local results and added to Git tracking; they were not regenerated or modified by this work.
+They remain historical evidence from the isolated multi-JVM harness described below and are not controlled shared-engine results.
+
+# Running benchmarks on the EC2 machine
+
+Recorded benchmark numbers come from a dedicated EC2 instance, not from a laptop.
+Local macOS runs are useful for smoke-testing the harness, but their numbers must never be compared against Linux results, because the machine differs.
+
+## The machine
+
+| Field | Value |
+| --- | --- |
+| Name tag | benchmarking machine |
+| Instance ID | `i-078521131c52e1d0a` |
+| Region | `us-east-1` |
+| Instance type | `c7i.2xlarge` (8 vCPU, 16 GiB) |
+| AMI | `ubuntu/images/hvm-ssd-gp3/ubuntu-resolute-26.0` |
+| SSH user | `ubuntu` |
+| Private IPv4 | `172.31.24.16` |
+| Repository path | `/home/ubuntu/ReDB` |
+| Security group | `sg-0047e40a49cd59dc2` (`launch-wizard-1`) |
+
+The private IP survives stop and start, so it is the reliable way to identify the instance.
+No Elastic IP is attached, so every start assigns a different public IP.
+The root volume is EBS gp3, so the repository and the generated data files survive a stop.
+
+The SSH key is `Benchmark ec2 key.pem`, kept in the repository root.
+It is excluded by `.gitignore` and must never be committed.
+Keep the local copy at mode `400` or OpenSSH will refuse it.
+
+## 1. Start the instance
+
+Start it from the EC2 console, or with the CLI once your credentials are valid.
+
+```bash
+aws ec2 start-instances --instance-ids i-078521131c52e1d0a --region us-east-1
+aws ec2 wait instance-running --instance-ids i-078521131c52e1d0a --region us-east-1
+aws ec2 describe-instances --instance-ids i-078521131c52e1d0a --region us-east-1 \
+  --query 'Reservations[].Instances[].PublicDnsName' --output text
+```
+
+Wait for both status checks to pass before connecting.
+
+## 2. Let your current IP through the security group
+
+The inbound SSH rule on `sg-0047e40a49cd59dc2` is pinned to a single address.
+A home or office IP usually changes between sessions, so an unreachable host is far more often a stale rule than a broken instance.
+
+```bash
+curl -s https://checkip.amazonaws.com
+aws ec2 authorize-security-group-ingress --group-id sg-0047e40a49cd59dc2 \
+  --protocol tcp --port 22 --cidr "$(curl -s https://checkip.amazonaws.com)/32" --region us-east-1
+```
+
+Revoke stale rules with `revoke-security-group-ingress` so the group does not accumulate dead addresses.
+
+## 3. Connect
+
+```bash
+ssh -i "Benchmark ec2 key.pem" ubuntu@<public-dns>
+```
+
+## 4. Sync the repository and build
+
+```bash
+cd /home/ubuntu/ReDB
+git fetch && git checkout <branch> && git pull
+mvn -q compile
+ls data/
+```
+
+If `data/` is missing the heap and index files, rebuild them with `./run.sh pre_process`.
+That step is slow, so avoid deleting the volume between sessions.
+
+## 5. Install the Python dependencies
+
+```bash
+pip3 install pandas matplotlib jupyter
+```
+
+## 6. Run both harnesses
+
+The comparison needs one run from each harness, produced on the same machine.
+Both runners default to the same tracked `benchmark/concurrency_workload.csv` and to matching aggregate buffer capacity, so run them with their defaults and do not override the workload or buffer options.
+
+```bash
+python3 benchmark/run_benchmark.py --skip-build
+python3 benchmark/run_shared_engine_benchmark.py --skip-build
+```
+
+The legacy runner appends to `benchmark/results/legacy-multi-jvm/runs/`.
+The shared runner writes a new UTC-stamped directory under `benchmark/results/shared-engine/`.
+
+Archived results directly under `benchmark/results/legacy-multi-jvm/` predate these aligned defaults and are not valid notebook input.
+Always generate a fresh legacy run rather than reusing them.
+
+## 7. Execute the comparison notebook
+
+Set the input paths in the first code cell of `benchmark/shared_engine_comparison.ipynb` to the two directories produced above, then execute it.
+
+```bash
+cd /home/ubuntu/ReDB/benchmark
+jupyter nbconvert --to notebook --execute shared_engine_comparison.ipynb \
+  --output shared_engine_comparison_executed.ipynb
+```
+
+To work interactively instead, forward the port from your machine with `ssh -i "Benchmark ec2 key.pem" -L 8888:localhost:8888 ubuntu@<public-dns>` and start `jupyter notebook --no-browser --port=8888` on the instance.
+
+## 8. Copy the results back
+
+```bash
+scp -i "Benchmark ec2 key.pem" \
+  ubuntu@<public-dns>:/home/ubuntu/ReDB/benchmark/shared_engine_comparison_executed.ipynb .
+```
+
+## 9. Stop the instance
+
+```bash
+aws ec2 stop-instances --instance-ids i-078521131c52e1d0a --region us-east-1
+```
+
+A `c7i.2xlarge` bills by the second while running, so leaving it up is the expensive failure mode.
+Stopping preserves the volume, so the next session resumes from step 1.
+
 # ReDB concurrent query benchmark
 
 This benchmark runs the existing `run_query` plan with multiple isolated JVM
@@ -94,7 +263,7 @@ python3 benchmark/run_benchmark.py \
 The default output writes:
 
 - `all_raw.csv`: one row per query process with `run_id`.
-- `all_summary.csv`: one row per concurrency level with `run_id` and config
+- `all_summary.csv`: one row per measured repetition with `run_id` and config
   columns such as `buffer_size`, `use_index`, `repetitions`, and `java_xmx`.
 - `all_metadata.jsonl`: one JSON object per benchmark invocation.
 
