@@ -14,9 +14,8 @@ import org.junit.jupiter.api.Test;
 import storage.RawPage;
 
 /**
- * pinPage hands back a versioned handle on the existing path — lock-free hit
- * included — while unpin still goes by key. The handle is not consumed yet;
- * these tests prove it names the pin that getPage already took.
+ * pinPage hands back a versioned handle; unpinPage(handle) releases that pin
+ * on the locked path. Key-based unpin remains for existing callers.
  */
 public class BufferManagerHandleTest {
 
@@ -116,6 +115,25 @@ public class BufferManagerHandleTest {
 		assertEquals((byte) 0, reloaded.page().getByteArray()[0]);
 
 		bm.unpinPage(reloaded);
+		assertEquals(0, bm.getTotalPinCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
+	public void handleUnpinOnAResidentPageDoesNotNeedTheKeyLookup() throws Exception {
+		String file = fingerprintFile(1);
+		BufferManager bm = new BufferManager(1);
+		bm.register(new TableEntry(file, SCHEMA));
+
+		PageHandle warm = bm.pinPage(file, 0);
+		bm.unpinPage(warm);
+		bm.resetIOCounts();
+
+		PageHandle hit = bm.pinPage(file, 0);
+		assertEquals(1, bm.getLockFreeHitCount());
+		bm.unpinPage(hit);
+		assertEquals(1, bm.getLockFreeUnpinCount());
+		assertEquals(0, bm.getReadIOCount());
 		assertEquals(0, bm.getTotalPinCount());
 		assertEquals(List.of(), bm.checkInvariants());
 	}

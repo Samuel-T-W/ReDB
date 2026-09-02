@@ -63,6 +63,8 @@ public class BufferManager {
 	// path taken, not time saved: it is exact and reproducible, where a latency
 	// figure from a hand-rolled harness on this workload would be neither.
 	private final LongAdder lockFreeHitCount = new LongAdder();
+	// unpinPage(handle) calls that released a pin without acquiring globalLock.
+	private final LongAdder lockFreeUnpinCount = new LongAdder();
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
@@ -412,21 +414,17 @@ public class BufferManager {
 	}
 
 	/**
-	 * Releases the pin named by {@code handle}. Still under globalLock so this
-	 * can land on the existing locked path before unpin itself goes lock-free.
-	 * The handle is marked released first: two unpins of the same token must
-	 * not decrement a sibling holder's pin on this incarnation.
+	 * Releases the pin named by {@code handle} without taking globalLock.
+	 * The handle already names the frame and version, so there is no key
+	 * lookup that could land on a recycled page. markReleased runs first so
+	 * a duplicated unpin cannot drop a sibling holder's pin.
 	 */
 	public void unpinPage(PageHandle handle) {
 		if (!handle.markReleased()) {
 			throw new IllegalStateException("handle already unpinned: " + handle);
 		}
-		globalLock.lock();
-		try {
-			releaseHandle(handle);
-		} finally {
-			globalLock.unlock();
-		}
+		releaseHandle(handle);
+		lockFreeUnpinCount.increment();
 	}
 
 	private void releaseHandle(PageHandle handle) {
@@ -769,9 +767,16 @@ public class BufferManager {
 		}
 	}
 
-	public void resetIOCounts() { readIOCount.reset(); writeIOCount.reset(); lockFreeHitCount.reset(); }
+	public void resetIOCounts() {
+		readIOCount.reset();
+		writeIOCount.reset();
+		lockFreeHitCount.reset();
+		lockFreeUnpinCount.reset();
+	}
 	/** getPage calls served entirely without globalLock. */
 	public long getLockFreeHitCount() { return lockFreeHitCount.sum(); }
+	/** unpinPage(handle) calls that released a pin without globalLock. */
+	public long getLockFreeUnpinCount() { return lockFreeUnpinCount.sum(); }
 	public long getReadIOCount()  { return readIOCount.sum();  }
 	public long getWriteIOCount() { return writeIOCount.sum(); }
 	public long getTotalIOCount() { return readIOCount.sum() + writeIOCount.sum(); }
