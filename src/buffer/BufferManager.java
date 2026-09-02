@@ -65,6 +65,11 @@ public class BufferManager {
 	private final LongAdder lockFreeHitCount = new LongAdder();
 	// unpinPage(handle) calls that released a pin without acquiring globalLock.
 	private final LongAdder lockFreeUnpinCount = new LongAdder();
+	// Taken on every acquire, including the relock after a dirty flush. A
+	// contended acquire (tryLock failed) also increments globalLockContentions.
+	// Same counters can sit on the PR 31 locked path; only the numbers change.
+	private final LongAdder globalLockAcquisitions = new LongAdder();
+	private final LongAdder globalLockContentions = new LongAdder();
 
 	public BufferManager(int bufferSize) {
 		this.bufferSize = bufferSize;
@@ -122,9 +127,8 @@ public class BufferManager {
 	/**
 	 * Pins the page and returns a handle that names that pin by frame and
 	 * version. {@link #getPage} unwraps the page so existing key-based callers
-	 * keep working; unpin still goes by key under globalLock. The handle is
-	 * what later lets unpin target this incarnation instead of whatever page
-	 * now occupies the key.
+	 * keep working. Unpin the handle to release this incarnation; key-based
+	 * unpin remains for callers that have not switched.
 	 */
 	public PageHandle pinPage(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
@@ -132,7 +136,7 @@ public class BufferManager {
 		if (hit != null) {
 			return hit;
 		}
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			int rounds = 0;
 			for (;;) {
@@ -192,7 +196,7 @@ public class BufferManager {
 				} catch (IOException | RuntimeException e) {
 					loadError = e;
 				} finally {
-					globalLock.lock();
+					acquireGlobalLock();
 				}
 				if (loadError != null) {
 					pageTable.remove(pageKey, claimed);
@@ -347,7 +351,7 @@ public class BufferManager {
 
 		// freshly allocated page id: no other thread can reference this key yet,
 		// so no in-flight load marker is needed around addToFrame
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			addToFrame(pageKey, page, true);
 		} finally {
@@ -396,7 +400,7 @@ public class BufferManager {
 	 */
 	public void unpinPage(String fileId, int pageId) {
 		PageKey pageKey = new PageKey(fileId, pageId);
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			Integer frameIndex = pageTable.get(pageKey);
 			if (frameIndex == null) {
@@ -440,7 +444,7 @@ public class BufferManager {
 
 	/** Forces all dirty pages currently in memory to be written back to disk. */
 	public void force() throws IOException {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			for (;;) {
 				boolean flushing = false;
@@ -500,7 +504,7 @@ public class BufferManager {
 	public void discardFile(String fileId) {
 		while (true) {
 			boolean inFlight = false;
-			globalLock.lock();
+			acquireGlobalLock();
 			try {
 				Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
 				while (iter.hasNext()) {
@@ -586,7 +590,7 @@ public class BufferManager {
 			} catch (IOException e) {
 				failure = e;
 			} finally {
-				globalLock.lock();
+				acquireGlobalLock();
 			}
 			try {
 				if (failure != null) {
@@ -772,18 +776,32 @@ public class BufferManager {
 		writeIOCount.reset();
 		lockFreeHitCount.reset();
 		lockFreeUnpinCount.reset();
+		globalLockAcquisitions.reset();
+		globalLockContentions.reset();
 	}
 	/** getPage calls served entirely without globalLock. */
 	public long getLockFreeHitCount() { return lockFreeHitCount.sum(); }
 	/** unpinPage(handle) calls that released a pin without globalLock. */
 	public long getLockFreeUnpinCount() { return lockFreeUnpinCount.sum(); }
+	/** Times {@link #acquireGlobalLock()} actually obtained the lock. */
+	public long getGlobalLockAcquisitions() { return globalLockAcquisitions.sum(); }
+	/** Times the lock was already held, so the caller had to wait. */
+	public long getGlobalLockContentions() { return globalLockContentions.sum(); }
+
+	private void acquireGlobalLock() {
+		if (!globalLock.tryLock()) {
+			globalLockContentions.increment();
+			globalLock.lock();
+		}
+		globalLockAcquisitions.increment();
+	}
 	public long getReadIOCount()  { return readIOCount.sum();  }
 	public long getWriteIOCount() { return writeIOCount.sum(); }
 	public long getTotalIOCount() { return readIOCount.sum() + writeIOCount.sum(); }
 
 	// For testing only
 	public int[] listPageID() {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			int[] pageID = new int[pageTable.size()];
 			Iterator<Map.Entry<PageKey, Integer>> iter = pageTable.entrySet().iterator();
@@ -801,7 +819,7 @@ public class BufferManager {
 
 	// For testing only: distinct fileIds with at least one page in the pool
 	public Set<String> bufferedFileIds() {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			Set<String> fileIds = new HashSet<>();
 			for (PageKey pageKey : pageTable.keySet()) {
@@ -820,7 +838,7 @@ public class BufferManager {
 
 	// For testing only
 	public int getTotalPinCount() {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			int total = 0;
 			for (Integer frameIndex : pageTable.values()) {
@@ -847,7 +865,7 @@ public class BufferManager {
 	 * merely moves between frames during the scan looks like two copies.
 	 */
 	List<String> checkInvariants() {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			List<String> problems = new ArrayList<>();
 			Map<PageKey, Integer> heldBy = new HashMap<>();
@@ -911,7 +929,7 @@ public class BufferManager {
 	// In a quiescent pool, free frames + pageTable entries == bufferSize (a frame
 	// mid-load is briefly in neither; a mid-flush frame stays in the page table).
 	int getFreeFrameCount() {
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			int free = 0;
 			for (FrameState state : frameStates) {
@@ -929,7 +947,7 @@ public class BufferManager {
 	public int getPinCount(String fileId, int pid) {
 		PageKey pageKey = new PageKey(fileId, pid);
 
-		globalLock.lock();
+		acquireGlobalLock();
 		try {
 			// get from buffer pool
 			if (pageTable.containsKey(pageKey)) {
