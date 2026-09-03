@@ -142,6 +142,107 @@ public class BufferManagerTest {
 	}
 
 	@Test
+	void evictionReclaimsTheOnlyUnpinnedFrameAndLoadsTheNewPage() throws Exception {
+		// pool of 3, holding pages 0, 1, 2; only page 1 is unpinned
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+		}
+		bm.unpinPage(fileOneName, 1);
+
+		Page page3 = bm.getPage(fileOneName, 3);
+
+		// page 1 is the frame the sweep reclaimed; 0 and 2 stayed put
+		assertArrayEquals(new int[]{0, 2, 3}, bufferedPageIds());
+		// and page 3 arrived whole: on disk every byte of it is 0xDD
+		byte[] expected = new byte[RawPage.MAX_PAGE_LEN];
+		Arrays.fill(expected, (byte) 0xDD);
+		assertArrayEquals(expected, page3.getByteArray());
+	}
+
+	@Test
+	void aPinnedFrameIsNeverChosenAsAVictim() throws Exception {
+		bm = new BufferManager(2);
+		bm.getPage(fileOneName, 0); // pinned for the whole test
+
+		// churn the one remaining frame; page 0 must survive every sweep
+		for (int pageId = 1; pageId <= 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+			assertEquals(1, bm.getPinCount(fileOneName, 0), "pinned page 0 was evicted");
+		}
+		assertArrayEquals(new int[]{0, 3}, bufferedPageIds());
+	}
+
+	@Test
+	void anAllPinnedPoolThrowsAndLeavesEveryFrameInPlace() throws Exception {
+		for (int pageId = 0; pageId < 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+		}
+
+		RuntimeException ex = assertThrowsExactly(RuntimeException.class, () -> bm.getPage(fileOneName, 3));
+
+		assertEquals("All frames are pinned, cannot evict", ex.getMessage());
+		// the failed sweep must leave the pool exactly as it found it
+		assertArrayEquals(new int[]{0, 1, 2}, bufferedPageIds());
+		assertEquals(3, bm.getTotalPinCount());
+	}
+
+	/**
+	 * Page ids held by the pool, sorted. The page table is a plain HashMap, so
+	 * {@link BufferManager#listPageID()} hands them back in no particular order.
+	 */
+	private int[] bufferedPageIds() {
+		int[] ids = bm.listPageID();
+		Arrays.sort(ids);
+		return ids;
+	}
+
+	@Test
+	void aCacheHitDoesNotProtectAPageTheWayLruWould() throws Exception {
+		// pool of 2 holding pages 0 and 1, both unpinned
+		bm = new BufferManager(2);
+		for (int pageId = 0; pageId < 2; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+		}
+
+		// hammer page 0: under LRU this would make page 1 the victim
+		for (int hit = 0; hit < 3; hit++) {
+			bm.getPage(fileOneName, 0);
+			bm.unpinPage(fileOneName, 0);
+		}
+		bm.getPage(fileOneName, 2);
+
+		// the hand still starts at frame 0, so the hottest page is the one that goes
+		assertArrayEquals(new int[]{1, 2}, bufferedPageIds());
+	}
+
+	@Test
+	void aPageTouchedSinceTheHandPassedSurvivesOneSweepAndGoesOnTheNext() throws Exception {
+		// pool of 3 holding pages 0, 1, 2, all unpinned; loading page 3 sweeps
+		// every reference bit clear and takes page 0
+		for (int pageId = 0; pageId <= 3; pageId++) {
+			bm.getPage(fileOneName, pageId);
+			bm.unpinPage(fileOneName, pageId);
+		}
+		assertArrayEquals(new int[]{1, 2, 3}, bufferedPageIds());
+
+		// touch page 1 only: the hit re-sets its reference bit via tryPin
+		bm.getPage(fileOneName, 1);
+		bm.unpinPage(fileOneName, 1);
+
+		// next sweep spends a pass giving page 1 its second chance and takes
+		// untouched page 2 instead
+		bm.getPage(fileOneName, 0);
+		bm.unpinPage(fileOneName, 0);
+		assertArrayEquals(new int[]{0, 1, 3}, bufferedPageIds());
+
+		// page 1 is now unreferenced, so the following sweep does take it
+		bm.getPage(fileOneName, 2);
+		assertArrayEquals(new int[]{0, 2, 3}, bufferedPageIds());
+	}
+
+	@Test
 	void testGetPageThatDoesNotExist() throws Exception {
 		// page 10 doesn't exist in the file (only pages 0-3)
 		assertThrows(java.io.EOFException.class, () -> {
@@ -150,39 +251,31 @@ public class BufferManagerTest {
 	}
 
 	@Test
-	public void testLRUEviction() {
-		// Goal: validate LRU replacement policy.
-		// Spec mapping: "LRU policy... page is used on getPage/createPage."
-		// Setup: access A, B, then touch A, then allocate C.
-		// Expect: B is evicted (least recently used).
-		//
-		// Pseudocode:
-		// A=create+unpin, B=create+unpin, getPage(A), create C
-		// assert B evicted, A and C in memory
-		try {
-			String fileTwoName = "fileTwo";
-			File tempFile = File.createTempFile(fileTwoName, ".dat");
-			tempFile.deleteOnExit();
-			fileTwoName = tempFile.getAbsolutePath();
-			bm = new BufferManager(2);
-			bm.register(new TableEntry(fileTwoName, MOVIE_SCHEMA));
-			Page page_A = bm.createPage(fileTwoName, null);
-			bm.unpinPage(fileTwoName, page_A.getPid());
-			Page page_B = bm.createPage(fileTwoName, null);
-			bm.unpinPage(fileTwoName, page_B.getPid());
-			bm.getPage(fileTwoName, page_A.getPid());
-			Page page_C = bm.createPage(fileTwoName, null);
-		} catch (Exception e) {
-			e.printStackTrace();
+	void createPageEvictsInHandOrderAndNeverTakesAPinnedFrame() throws Exception {
+		File tempFile = File.createTempFile("fileTwo", ".dat");
+		tempFile.deleteOnExit();
+		String fileTwoName = tempFile.getAbsolutePath();
+		bm = new BufferManager(2);
+		bm.register(new TableEntry(fileTwoName, MOVIE_SCHEMA));
+
+		// pool of 2 holding freshly created pages 0 and 1, both unpinned
+		for (int pageId = 0; pageId < 2; pageId++) {
+			assertEquals(pageId, bm.createPage(fileTwoName, null).getPid());
+			bm.unpinPage(fileTwoName, pageId);
 		}
 
-		// Assert page B is evicted
-		int[] ids = bm.listPageID();
-		int[] expected = new int[]{0, 2};
-		for (int i = 0; i < ids.length; i++) {
-			System.out.println(ids[0]);
-		}
-		assertArrayEquals(expected, ids);
+		// allocating page 2 sweeps both reference bits clear, then takes page 0:
+		// the frame the hand reaches first once nothing is referenced
+		bm.createPage(fileTwoName, null);
+		bm.unpinPage(fileTwoName, 2);
+		assertArrayEquals(new int[]{1, 2}, bufferedPageIds());
+
+		// pin page 1 and leave it pinned. The sweep for page 3 reaches it first
+		// and clears its reference bit, but must still refuse it as a victim and
+		// carry on to unpinned page 2.
+		bm.getPage(fileTwoName, 1);
+		bm.createPage(fileTwoName, null);
+		assertArrayEquals(new int[]{1, 3}, bufferedPageIds());
 	}
 
 	@Test
@@ -447,6 +540,66 @@ public class BufferManagerTest {
 		assertFalse(bm.bufferedFileIds().contains(scratchId), "no pages of the file may remain buffered");
 		assertEquals(3, bm.getFreeFrameCount(), "discarded frames must return to the free list");
 		assertEquals(0, bm.createPage(scratchId, null).getPid(), "page ids restart once the file is forgotten");
+	}
+
+	@Test
+	public void testFreshPoolHandsOutEveryFrameWithNoFreeList() throws Exception {
+		// Goal: the FREE state words alone are enough to allocate a fresh pool.
+		// Worked example: a pool of 3 reports 3 free frames, three createPage
+		// calls return page ids 0, 1 and 2, and no frame is left free.
+		String scratchId = "fresh-pool";
+		assertEquals(3, bm.getFreeFrameCount());
+		assertEquals(0, bm.createPage(scratchId, null).getPid());
+		assertEquals(1, bm.createPage(scratchId, null).getPid());
+		assertEquals(2, bm.createPage(scratchId, null).getPid());
+		int[] buffered = bm.listPageID();
+		Arrays.sort(buffered);
+		assertArrayEquals(new int[] {0, 1, 2}, buffered);
+		assertEquals(0, bm.getFreeFrameCount(), "a full pool has no free frame left");
+	}
+
+	@Test
+	public void testFramesFreedByDiscardAreFoundByLaterAllocations() throws Exception {
+		// Goal: discardFile hands its frames back through the state word only,
+		// so every one of them must be reachable again, not just the first.
+		String discarded = "discard-reuse";
+		for (int i = 0; i < 3; i++) {
+			bm.unpinPage(discarded, bm.createPage(discarded, null).getPid());
+		}
+		assertEquals(0, bm.getFreeFrameCount());
+
+		bm.discardFile(discarded);
+		assertEquals(3, bm.getFreeFrameCount());
+
+		String reuse = "discard-reuse-next";
+		assertEquals(0, bm.createPage(reuse, null).getPid());
+		assertEquals(1, bm.createPage(reuse, null).getPid());
+		assertEquals(2, bm.createPage(reuse, null).getPid());
+		assertEquals(0, bm.getFreeFrameCount());
+	}
+
+	@Test
+	public void testFailedEvictionDoesNotLoseAFrame() throws Exception {
+		// Goal: a failure in the allocate-or-evict path leaves every frame
+		// findable. The write-back of a dirty victim is aimed into a directory
+		// that does not exist yet, so the eviction fails; creating the directory
+		// then lets the very same allocation succeed on an intact pool.
+		File missingDir = new File(System.getProperty("java.io.tmpdir"), "redb-lost-frame-" + System.nanoTime());
+		File scratchFile = new File(missingDir, "scratch.dat");
+		scratchFile.deleteOnExit();
+		missingDir.deleteOnExit();
+		String scratchId = scratchFile.getAbsolutePath();
+		for (int i = 0; i < 3; i++) {
+			Page page = bm.createPage(scratchId, null);
+			bm.markDirty(scratchId, page.getPid());
+			bm.unpinPage(scratchId, page.getPid());
+		}
+
+		assertThrows(IOException.class, () -> bm.createPage(scratchId, null));
+		assertEquals(3, bm.getFreeFrameCount() + bm.listPageID().length, "the failed eviction lost a frame");
+
+		assertTrue(missingDir.mkdirs());
+		assertDoesNotThrow(() -> bm.createPage(scratchId, null));
 	}
 
 	@Test

@@ -1,0 +1,363 @@
+package buffer;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * A frame's entire mutable coordination state packed into a single 64-bit
+ * atomic word, so pin count, lifecycle state, the clock's reference bit and a
+ * recycle version can all be read and updated in one CAS. This is what lets
+ * the buffer pool drop its global lock: every transition below is a guarded
+ * compare-and-swap over the whole word, never a lock.
+ *
+ * <p>Bit layout (LSB first):
+ *
+ * <pre>
+ *   bits  0..31  pinCount   (unsigned 32-bit)
+ *   bits 32..34  state ordinal (FREE=0, LOADING=1, VALID=2, EVICTING=3, FLUSHING=4)
+ *   bit  35      referenced (the clock sweeper's second-chance bit)
+ *   bits 36..63  version    (28-bit recycle counter, bumped on every return to FREE)
+ * </pre>
+ *
+ * <p>The version counter exists to defeat ABA: a frame that is evicted and
+ * refilled while another thread held a stale observation will not compare
+ * equal, because the version moved.
+ *
+ * <p>All bit twiddling is confined to this class. Callers see enums, longs and
+ * booleans, never a mask or a shift.
+ */
+public final class FrameState {
+
+	/** Lifecycle state of a buffer frame. Ordinals are part of the packed layout. */
+	public enum State {
+		FREE, LOADING, VALID, EVICTING, FLUSHING
+	}
+
+	private static final State[] STATES = State.values();
+
+	private static final int STATE_SHIFT = 32;
+	private static final int REF_SHIFT = 35;
+	private static final int VERSION_SHIFT = 36;
+
+	private static final long PIN_MASK = 0xFFFF_FFFFL;
+	private static final long STATE_MASK = 0x7L;
+	private static final long REF_BIT = 1L << REF_SHIFT;
+	private static final long VERSION_MASK = 0x0FFF_FFFFL;
+
+	/** Largest representable pin count; {@link #tryPin()} refuses to exceed it. */
+	public static final long MAX_PIN_COUNT = PIN_MASK;
+
+	/** Largest representable version; the counter wraps to 0 past this. */
+	public static final long MAX_VERSION = VERSION_MASK;
+
+	private final AtomicLong word;
+
+	/**
+	 * Pool-wide count of frames at FREE, shared by every state in one pool, or
+	 * null for a state that stands alone. Moved in the same two methods that
+	 * move the word into and out of FREE, so it cannot drift from the words.
+	 */
+	private final AtomicInteger freeFrames;
+
+	/** Creates a frame state at FREE, pin 0, unreferenced, version 0. */
+	public FrameState() {
+		this(State.FREE, 0L, false, 0L, null);
+	}
+
+	/** Creates a FREE frame state that counts itself in {@code freeFrames}. */
+	public FrameState(AtomicInteger freeFrames) {
+		this(State.FREE, 0L, false, 0L, freeFrames);
+	}
+
+	/** Creates a frame state with the given fields already set. */
+	public FrameState(State state, long pinCount, boolean referenced, long version) {
+		this(state, pinCount, referenced, version, null);
+	}
+
+	private FrameState(State state, long pinCount, boolean referenced, long version, AtomicInteger freeFrames) {
+		this.word = new AtomicLong(encode(state, pinCount, referenced, version));
+		this.freeFrames = freeFrames;
+		if (freeFrames != null && state == State.FREE) {
+			freeFrames.incrementAndGet();
+		}
+	}
+
+	// ---------------------------------------------------------------- pinning
+
+	/**
+	 * Pins the frame and sets the reference bit in one atomic step. Succeeds
+	 * only from {@link State#VALID}; returns false from any other state, and
+	 * also returns false rather than wrapping when the pin count is already at
+	 * {@link #MAX_PIN_COUNT} (a wrap would silently corrupt the state bits).
+	 */
+	public boolean tryPin() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID) {
+				return false;
+			}
+			long pins = decodePinCount(cur);
+			if (pins == MAX_PIN_COUNT) {
+				return false;
+			}
+			long next = withReferenced(withPinCount(cur, pins + 1), true);
+			if (word.compareAndSet(cur, next)) {
+				return true;
+			}
+		}
+	}
+
+	/**
+	 * Pins the frame only if it is still the incarnation the caller observed.
+	 *
+	 * <p>This is the ABA guard the version counter exists for. A caller that
+	 * located this frame through the page table and then lost the CPU may be
+	 * looking at a frame that has since been evicted and refilled with an
+	 * entirely different page; the state word alone cannot tell the difference,
+	 * because the refilled frame is VALID again. The version has moved, so the
+	 * pin is refused and the caller must look the page up afresh.
+	 *
+	 * @param expectedVersion the version the caller saw when it chose this frame
+	 */
+	public boolean tryPin(long expectedVersion) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodeVersion(cur) != expectedVersion) {
+				return false;
+			}
+			long pins = decodePinCount(cur);
+			if (pins == MAX_PIN_COUNT) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withReferenced(withPinCount(cur, pins + 1), true))) {
+				return true;
+			}
+		}
+	}
+
+	/**
+	 * Releases one pin taken on the incarnation identified by
+	 * {@code expectedVersion}.
+	 *
+	 * <p>Reading {@link #version()} straight after a successful pin is sound, and
+	 * is how callers come by the argument: a pinned frame cannot be recycled,
+	 * because {@link #tryClaimForEviction()} demands a pin count of zero and only
+	 * {@link #finishEvict()} moves the version. So for as long as a caller holds
+	 * a pin, the state stays VALID and the version stays put.
+	 *
+	 * <p>Checking both is what stops a late or duplicated unpin from decrementing
+	 * a pin that now belongs to someone else: without it, the count is just a
+	 * number and any caller can drop any other caller's claim, leaving a frame
+	 * evictable while it is still being read.
+	 *
+	 * @return true if a pin was released; false if the frame is no longer VALID
+	 *         or has been recycled since the caller pinned it
+	 * @throws IllegalStateException if this incarnation holds no pin at all
+	 */
+	public boolean unpin(long expectedVersion) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodeVersion(cur) != expectedVersion) {
+				return false;
+			}
+			long pins = decodePinCount(cur);
+			if (pins == 0) {
+				throw new IllegalStateException("unpin() with pinCount already 0: " + describe(cur));
+			}
+			if (word.compareAndSet(cur, withPinCount(cur, pins - 1))) {
+				return true;
+			}
+		}
+	}
+
+	// --------------------------------------------------------------- eviction
+
+	/**
+	 * Claims exclusive ownership of the frame for eviction: VALID to EVICTING,
+	 * permitted only when the frame is unpinned and unreferenced. Exactly one
+	 * thread can win this handoff; everyone else, including concurrent pinners,
+	 * is locked out because {@link #tryPin()} requires VALID.
+	 */
+	public boolean tryClaimForEviction() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.VALID || decodePinCount(cur) != 0 || decodeReferenced(cur)) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withState(cur, State.EVICTING))) {
+				return true;
+			}
+		}
+	}
+
+	/**
+	 * Spends the second chance the caller observed: clears the reference bit,
+	 * but only while the word still reads exactly {@code expected}.
+	 *
+	 * <p>Deliberately a single compare-and-swap rather than a retry loop. A loop
+	 * that re-read the word would clear whatever reference bit it found, and
+	 * {@link #tryPin()} raises that bit in the same CAS that raises the pin — so
+	 * a reader arriving between the caller's observation and this call would
+	 * have its brand-new second chance spent on its behalf, and the page it just
+	 * touched would fall to the next pass of the clock hand. A reference newer
+	 * than {@code expected} belongs to that reader, not to the sweeper, so the
+	 * CAS fails and the bit stands.
+	 *
+	 * @param expected the word the caller decided on, from {@link #snapshot()}
+	 * @return true if this call cleared the bit it observed; false if the frame
+	 *         was not a referenced VALID frame at {@code expected}, or if the
+	 *         word has moved at all since
+	 */
+	public boolean clearReferenced(long expected) {
+		if (decodeState(expected) != State.VALID || !decodeReferenced(expected)) {
+			return false;
+		}
+		return word.compareAndSet(expected, withReferenced(expected, false));
+	}
+
+	// ------------------------------------------------------------ transitions
+
+	/** FREE to LOADING. */
+	public boolean tryBeginLoad() {
+		if (!transition(State.FREE, State.LOADING)) {
+			return false;
+		}
+		if (freeFrames != null) {
+			freeFrames.decrementAndGet();
+		}
+		return true;
+	}
+
+	/** LOADING to VALID. */
+	public boolean finishLoad() {
+		return transition(State.LOADING, State.VALID);
+	}
+
+	/** EVICTING to FLUSHING, for a victim whose page must be written back. */
+	public boolean beginFlush() {
+		return transition(State.EVICTING, State.FLUSHING);
+	}
+
+	/** EVICTING or FLUSHING to FREE, resetting the pin count and bumping the version. */
+	public boolean finishEvict() {
+		for (;;) {
+			long cur = word.get();
+			State state = decodeState(cur);
+			if (state != State.EVICTING && state != State.FLUSHING) {
+				return false;
+			}
+			long next = encode(State.FREE, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
+			if (word.compareAndSet(cur, next)) {
+				if (freeFrames != null) {
+					freeFrames.incrementAndGet();
+				}
+				return true;
+			}
+		}
+	}
+
+	/** EVICTING back to VALID, for an evictor that bails out. */
+	public boolean abortEvict() {
+		return transition(State.EVICTING, State.VALID);
+	}
+
+	/** FLUSHING back to VALID, for a flush that failed to land. Never transits FREE. */
+	public boolean abortFlush() {
+		return transition(State.FLUSHING, State.VALID);
+	}
+
+	private boolean transition(State expected, State target) {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != expected) {
+				return false;
+			}
+			if (word.compareAndSet(cur, withState(cur, target))) {
+				return true;
+			}
+		}
+	}
+
+	// -------------------------------------------------------------- accessors
+
+	public State state() {
+		return decodeState(word.get());
+	}
+
+	/** Pin count as an unsigned value; widened to long because 32 bits do not fit an int. */
+	public long pinCount() {
+		return decodePinCount(word.get());
+	}
+
+	public boolean isReferenced() {
+		return decodeReferenced(word.get());
+	}
+
+	public long version() {
+		return decodeVersion(word.get());
+	}
+
+	/** The raw packed word, for callers that need a single consistent observation. */
+	public long snapshot() {
+		return word.get();
+	}
+
+	@Override
+	public String toString() {
+		return describe(word.get());
+	}
+
+	// ----------------------------------------------------- encode and decode
+
+	public static long encode(State state, long pinCount, boolean referenced, long version) {
+		if (state == null) {
+			throw new NullPointerException("state");
+		}
+		if (pinCount < 0 || pinCount > MAX_PIN_COUNT) {
+			throw new IllegalArgumentException("pinCount out of range: " + pinCount);
+		}
+		if (version < 0 || version > MAX_VERSION) {
+			throw new IllegalArgumentException("version out of range: " + version);
+		}
+		return (pinCount & PIN_MASK)
+				| ((long) state.ordinal() << STATE_SHIFT)
+				| (referenced ? REF_BIT : 0L)
+				| ((version & VERSION_MASK) << VERSION_SHIFT);
+	}
+
+	public static State decodeState(long word) {
+		return STATES[(int) ((word >>> STATE_SHIFT) & STATE_MASK)];
+	}
+
+	public static long decodePinCount(long word) {
+		return word & PIN_MASK;
+	}
+
+	public static boolean decodeReferenced(long word) {
+		return (word & REF_BIT) != 0L;
+	}
+
+	public static long decodeVersion(long word) {
+		return (word >>> VERSION_SHIFT) & VERSION_MASK;
+	}
+
+	/** Human-readable rendering of a packed word, e.g. {@code FrameState[state=VALID, pin=3, ref=1, ver=7]}. */
+	public static String describe(long word) {
+		return "FrameState[state=" + decodeState(word)
+				+ ", pin=" + decodePinCount(word)
+				+ ", ref=" + (decodeReferenced(word) ? 1 : 0)
+				+ ", ver=" + decodeVersion(word) + "]";
+	}
+
+	private static long withPinCount(long word, long pinCount) {
+		return (word & ~PIN_MASK) | (pinCount & PIN_MASK);
+	}
+
+	private static long withState(long word, State state) {
+		return (word & ~(STATE_MASK << STATE_SHIFT)) | ((long) state.ordinal() << STATE_SHIFT);
+	}
+
+	private static long withReferenced(long word, boolean referenced) {
+		return referenced ? (word | REF_BIT) : (word & ~REF_BIT);
+	}
+}
