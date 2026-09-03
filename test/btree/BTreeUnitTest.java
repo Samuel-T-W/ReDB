@@ -94,5 +94,14 @@ public class BTreeUnitTest {
 			count++;
 		}
 		assertEquals(3, count, "search for duplicate key should return all 3 RIDs");
+		assertEquals(0, bm.getTotalPinCount());
+
+		bm.resetIOCounts();
+		assertTrue(btree.search(dupKey).hasNext());
+		assertTrue(bm.getLockFreeHitCount() > 0);
+		assertTrue(bm.getLockFreeUnpinCount() > 0);
+		assertEquals(0, bm.getGlobalLockAcquisitions(),
+				"a resident index search must pin and unpin without globalLock");
+		assertEquals(0, bm.getTotalPinCount());
 	}
 }

@@ -1,6 +1,7 @@
 package storage;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -304,8 +305,8 @@ public class BTreeManager implements BTree {
 		byte[] searchKeyBytes = key.getKeyAsBytes();
 
 		while (leafId != LeafPage.NO_NEXT) {
-			Page raw = bufferManager.getPage(fileId, leafId);
-			LeafPage leaf = new LeafPage(raw.getByteArray(), KEY_SIZE);
+			PageHandle leafHandle = pin(leafId);
+			LeafPage leaf = new LeafPage(leafHandle.page().getByteArray(), KEY_SIZE);
 			int nextId = leaf.getNextPageId();
 
 			for (int i = 0; i < leaf.getSize(); i++) {
@@ -313,11 +314,11 @@ public class BTreeManager implements BTree {
 				if (cmp == 0) {
 					results.add(leaf.getRid(i));
 				} else if (cmp > 0) {
-					bufferManager.unpinPage(fileId, leafId);
+					unpin(leafHandle);
 					return results.iterator();
 				}
 			}
-			bufferManager.unpinPage(fileId, leafId);
+			unpin(leafHandle);
 
 			// If no match has been found yet the key is absent; stop scanning.
 			if (results.isEmpty())
@@ -338,8 +339,8 @@ public class BTreeManager implements BTree {
 		byte[] endBytes = endKey.getKeyAsBytes();
 
 		while (leafId != LeafPage.NO_NEXT) {
-			Page raw = bufferManager.getPage(fileId, leafId);
-			LeafPage leaf = new LeafPage(raw.getByteArray(), KEY_SIZE);
+			PageHandle leafHandle = pin(leafId);
+			LeafPage leaf = new LeafPage(leafHandle.page().getByteArray(), KEY_SIZE);
 			int nextId = leaf.getNextPageId();
 			boolean pastEnd = false;
 
@@ -353,7 +354,7 @@ public class BTreeManager implements BTree {
 					results.add(leaf.getRid(i));
 			}
 
-			bufferManager.unpinPage(fileId, leafId);
+			unpin(leafHandle);
 			if (pastEnd)
 				break;
 			leafId = nextId;
@@ -375,10 +376,10 @@ public class BTreeManager implements BTree {
 	private int findLeafId(K key) throws IOException {
 		int pageId = rootId;
 		while (true) {
-			Page raw = bufferManager.getPage(fileId, pageId);
-			byte[] data = raw.getByteArray();
+			PageHandle handle = pin(pageId);
+			byte[] data = handle.page().getByteArray();
 			boolean isLeaf = ByteBuffer.wrap(data).getInt(0) == 1; // OFFSET_IS_LEAF
-			bufferManager.unpinPage(fileId, pageId);
+			unpin(handle);
 
 			if (isLeaf)
 				return pageId;
@@ -484,6 +485,14 @@ public class BTreeManager implements BTree {
 	// -----------------------------------------------------------------------
 	// Private helpers
 	// -----------------------------------------------------------------------
+
+	private PageHandle pin(int pageId) throws IOException {
+		return bufferManager.pinPage(fileId, pageId);
+	}
+
+	private void unpin(PageHandle handle) {
+		bufferManager.unpinPage(handle);
+	}
 
 	/**
 	 * Updates the {@code parentId} field in the stored page to {@code newParentId}.
