@@ -165,12 +165,13 @@ public class BufferManager {
 				Integer winner = pageTable.putIfAbsent(pageKey, claimed);
 				if (winner != null) {
 					// Another loader got there first, possibly while claimFrame
-					// dropped the lock to flush. Give the frame back and wait for
-					// their load. Looping straight back to claimFrame instead
-					// would evict a fresh victim, and could pay a real disk write
-					// on every lost round.
+					// dropped the lock to flush. Give the unused frame back and
+					// look the winner up again. Waiting here unconditionally
+					// hangs if they have already settled and signalled: the
+					// signal is not retained, and Condition.await has no
+					// timeout. The loop head pins a VALID winner and waits
+					// only when that mapping is still unsettled.
 					releaseClaim(claimed, null);
-					awaitFlushSettled();
 					continue;
 				}
 

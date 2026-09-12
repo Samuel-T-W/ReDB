@@ -733,4 +733,44 @@ public class BufferManagerConcurrencyTest {
 			runAllAtOnce(List.of(evictor, reader));
 		}
 	}
+
+	@Test
+	public void testLostLoadArbitrationDoesNotWaitForASignalAlreadySent() throws Exception {
+		// Worked example: a 2-frame pool holds dirty page 0 (memory 0x2A) and
+		// clean page 1 (0x01). getPage(2) on the loser drops globalLock to
+		// flush page 0. The winner then loads page 2 (disk 0x02) into the
+		// other frame and settles before the loser resumes. The loser must
+		// return that same 0x02 page, with one disk read and no hang on a
+		// settle signal that has already been sent.
+		String fileName = createFingerprintFile(3);
+		ControlledFlushManager bm = new ControlledFlushManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		Page page0 = bm.getPage(fileName, 0);
+		page0.getByteArray()[0] = (byte) 0x2A;
+		bm.markDirty(fileName, 0);
+		bm.unpinPage(fileName, 0);
+		bm.getPage(fileName, 1);
+		bm.unpinPage(fileName, 1);
+
+		byte[] seen = new byte[1];
+		Thread loser = startGet(bm, fileName, 2, seen);
+		assertTrue(bm.flushStarted.await(5, TimeUnit.SECONDS), "loser must start the dirty flush");
+
+		bm.resetIOCounts();
+		Page winner = bm.getPage(fileName, 2);
+		assertEquals((byte) 0x02, winner.getByteArray()[0], "winner loads page 2");
+		assertEquals(1, bm.getReadIOCount(), "the winner issues the only disk read of page 2");
+
+		bm.releaseFlush.countDown();
+		loser.join(5_000);
+		assertFalse(loser.isAlive(), "the loser must finish after the winner is already VALID");
+		assertEquals((byte) 0x02, seen[0], "the loser must use the page the winner already loaded");
+		assertEquals(1, bm.getReadIOCount(), "losing arbitration must not start a second load");
+		assertEquals(List.of(), bm.checkInvariants());
+		assertEquals(2, bm.getPinCount(fileName, 2));
+		bm.unpinPage(fileName, 2);
+		bm.unpinPage(fileName, 2);
+		assertEquals(0, bm.getTotalPinCount());
+	}
 }
