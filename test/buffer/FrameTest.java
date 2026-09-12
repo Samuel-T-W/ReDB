@@ -2,6 +2,7 @@ package buffer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.lang.invoke.VarHandle;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,8 +59,15 @@ public class FrameTest {
 				// back, because every return to FREE goes through finishEvict,
 				// which bumps the version. Without the bracket the observer
 				// reports the owner's *next* fill as a violation of this one.
+				//
+				// The closing snapshot needs the fence to actually close. page
+				// is a plain field, and a plain load is not ordered before a
+				// volatile load that follows it, so without the fence the read
+				// of page may drift past `after` and observe a frame the owner
+				// has since refilled, under a word that never moved.
 				long before = frame.state.snapshot();
 				Object page = frame.page;
+				VarHandle.loadLoadFence();
 				long after = frame.state.snapshot();
 				if (before == after
 						&& FrameState.decodeState(before) == FrameState.State.FREE
@@ -136,5 +144,31 @@ public class FrameTest {
 		assertNull(frame.page);
 		assertNull(frame.pageKey);
 		assertFalse(frame.isDirty);
+	}
+
+	@Test
+	public void abortLoadClearsFieldsBeforePublishingFree() {
+		Frame frame = freeFrame();
+		assertTrue(frame.state.tryBeginLoad());
+		frame.pageKey = new PageKey("f", 1);
+		frame.isDirty = true;
+
+		frame.abortLoad();
+
+		assertEquals(FrameState.State.FREE, frame.state.state());
+		assertEquals(1L, frame.state.version(), "aborting a load is a recycle and must move the version");
+		assertNull(frame.page);
+		assertNull(frame.pageKey);
+		assertFalse(frame.isDirty);
+	}
+
+	@Test
+	public void abortLoadRefusesAFrameThisCallerDoesNotOwn() {
+		Frame frame = freeFrame();
+		fill(frame);
+
+		assertThrows(IllegalStateException.class, frame::abortLoad);
+		assertEquals(FrameState.State.VALID, frame.state.state());
+		assertNotNull(frame.page);
 	}
 }

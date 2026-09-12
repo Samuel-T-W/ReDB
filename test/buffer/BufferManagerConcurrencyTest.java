@@ -202,10 +202,13 @@ public class BufferManagerConcurrencyTest {
 		bm.unpinPage(fileName, 0);
 	}
 
-	/** A manager whose disk read can be stalled on demand. */
+	/** A manager whose disk read can be stalled or failed on demand. */
 	private static final class ControlledLoadManager extends BufferManager {
 		final CountDownLatch loadStarted = new CountDownLatch(1);
 		final CountDownLatch releaseLoad = new CountDownLatch(1);
+		volatile boolean failLoad = false;
+		volatile FrameState.State stateAfterFailedLoad;
+		volatile boolean pinnedAfterFailedLoad;
 
 		ControlledLoadManager(int bufferSize) { super(bufferSize); }
 
@@ -217,7 +220,16 @@ public class BufferManagerConcurrencyTest {
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 			}
+			if (failLoad) {
+				throw new IOException("injected load failure");
+			}
 			return super.readPageFromDisk(pageKey);
+		}
+
+		@Override
+		void afterFailedLoadLeftLoading(int frameIndex) {
+			stateAfterFailedLoad = frameStates[frameIndex].state();
+			pinnedAfterFailedLoad = frameStates[frameIndex].tryPin();
 		}
 	}
 
@@ -732,5 +744,75 @@ public class BufferManagerConcurrencyTest {
 			};
 			runAllAtOnce(List.of(evictor, reader));
 		}
+	}
+
+	@Test
+	public void testLostLoadArbitrationDoesNotWaitForASignalAlreadySent() throws Exception {
+		// Worked example: a 2-frame pool holds dirty page 0 (memory 0x2A) and
+		// clean page 1 (0x01). getPage(2) on the loser drops globalLock to
+		// flush page 0. The winner then loads page 2 (disk 0x02) into the
+		// other frame and settles before the loser resumes. The loser must
+		// return that same 0x02 page, with one disk read and no hang on a
+		// settle signal that has already been sent.
+		String fileName = createFingerprintFile(3);
+		ControlledFlushManager bm = new ControlledFlushManager(2);
+		bm.register(new TableEntry(fileName, SCHEMA));
+
+		Page page0 = bm.getPage(fileName, 0);
+		page0.getByteArray()[0] = (byte) 0x2A;
+		bm.markDirty(fileName, 0);
+		bm.unpinPage(fileName, 0);
+		bm.getPage(fileName, 1);
+		bm.unpinPage(fileName, 1);
+
+		byte[] seen = new byte[1];
+		Thread loser = startGet(bm, fileName, 2, seen);
+		assertTrue(bm.flushStarted.await(5, TimeUnit.SECONDS), "loser must start the dirty flush");
+
+		bm.resetIOCounts();
+		Page winner = bm.getPage(fileName, 2);
+		assertEquals((byte) 0x02, winner.getByteArray()[0], "winner loads page 2");
+		assertEquals(1, bm.getReadIOCount(), "the winner issues the only disk read of page 2");
+
+		bm.releaseFlush.countDown();
+		loser.join(5_000);
+		assertFalse(loser.isAlive(), "the loser must finish after the winner is already VALID");
+		assertEquals((byte) 0x02, seen[0], "the loser must use the page the winner already loaded");
+		assertEquals(1, bm.getReadIOCount(), "losing arbitration must not start a second load");
+		assertEquals(List.of(), bm.checkInvariants());
+		assertEquals(2, bm.getPinCount(fileName, 2));
+		bm.unpinPage(fileName, 2);
+		bm.unpinPage(fileName, 2);
+		assertEquals(0, bm.getTotalPinCount());
+	}
+
+	@Test
+	public void testFailedLoadDoesNotPublishValidNullAndLeavesTheFrameReusable() throws Exception {
+		// Worked example: a 1-frame pool fails the disk read of page 0
+		// (fingerprint 0x00) with "injected load failure". A stale observer
+		// that already saw the mapping must not be able to pin: the frame
+		// goes FREE, never VALID with a null page. Pin count stays 0, the
+		// sole frame is free, and getPage(0) then returns the 0x00 page.
+		String fileName = createFingerprintFile(1);
+		ControlledLoadManager bm = new ControlledLoadManager(1);
+		bm.register(new TableEntry(fileName, SCHEMA));
+		bm.failLoad = true;
+		bm.releaseLoad.countDown();
+
+		IOException ex = assertThrows(IOException.class, () -> bm.getPage(fileName, 0));
+		assertEquals("injected load failure", ex.getMessage());
+		assertEquals(0, ex.getSuppressed().length, "cleanup must not replace the load failure");
+
+		assertEquals(FrameState.State.FREE, bm.stateAfterFailedLoad,
+				"failed-load cleanup must not publish VALID");
+		assertFalse(bm.pinnedAfterFailedLoad, "a stale observer must not pin the failed load");
+		assertEquals(0, bm.getTotalPinCount(), "the failed load must not leave an orphan pin");
+		assertEquals(1, bm.getFreeFrameCount());
+		assertEquals(0, bm.listPageID().length);
+
+		bm.failLoad = false;
+		assertEquals((byte) 0x00, bm.getPage(fileName, 0).getByteArray()[0]);
+		bm.unpinPage(fileName, 0);
+		assertEquals(0, bm.getTotalPinCount());
 	}
 }

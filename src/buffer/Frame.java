@@ -33,6 +33,24 @@ public class Frame {
 	}
 
 	/**
+	 * Aborts a load this caller owns: erases the frame and publishes it FREE
+	 * directly from LOADING. VALID is never a stop on this path, so a reader
+	 * cannot pin a null page. Fields are cleared first; FREE is published last.
+	 */
+	public void abortLoad() {
+		if (state.state() != FrameState.State.LOADING) {
+			throw new IllegalStateException(
+					"frame " + frameIndex + " is not this caller's to abort: " + describeState());
+		}
+		this.page = null;
+		this.isDirty = false;
+		this.pageKey = null;
+		if (!state.abortLoad()) {
+			throw new IllegalStateException("cannot abort load on frame " + frameIndex + ": " + describeState());
+		}
+	}
+
+	/**
 	 * Takes one pin. A refusal means the frame is not VALID or the pin count is
 	 * saturated; either way the caller would otherwise silently lose a pin and
 	 * read a frame it does not own, so fail loudly instead.

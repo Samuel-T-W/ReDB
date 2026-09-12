@@ -13,6 +13,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -39,6 +40,7 @@ public class BufferManager {
 	// a victim already claimed in EVICTING, so no other thread can pin or
 	// re-evict it while this thread drops globalLock to flush.
 	private final ClockReplacer clockReplacer;
+	private final AtomicInteger freeFrames = new AtomicInteger();
 
 	// Global lock guarding all buffer pool state: pageTable, bufferPool frames
 	// (pin counts, dirty flags, contents). Page loads and dirty eviction
@@ -80,13 +82,14 @@ public class BufferManager {
 		this.catalog = new ConcurrentHashMap<>();
 
 		initializeBufferManager();
-		this.clockReplacer = new ClockReplacer(frameStates);
+		this.clockReplacer = new ClockReplacer(frameStates, freeFrames);
 	}
 
 	private void initializeBufferManager() {
-		// FREE is the pool's only record of a frame being available
+		// FREE is the pool's only record of a frame being available; the shared
+		// count only lets the replacer skip a sweep it knows would find nothing
 		for (int i = 0; i < bufferSize; i++) {
-			frameStates[i] = new FrameState();
+			frameStates[i] = new FrameState(freeFrames);
 		}
 	}
 
@@ -179,12 +182,13 @@ public class BufferManager {
 				Integer winner = pageTable.putIfAbsent(pageKey, claimed);
 				if (winner != null) {
 					// Another loader got there first, possibly while claimFrame
-					// dropped the lock to flush. Give the frame back and wait for
-					// their load. Looping straight back to claimFrame instead
-					// would evict a fresh victim, and could pay a real disk write
-					// on every lost round.
+					// dropped the lock to flush. Give the unused frame back and
+					// look the winner up again. Waiting here unconditionally
+					// hangs if they have already settled and signalled: the
+					// signal is not retained, and Condition.await has no
+					// timeout. The loop head pins a VALID winner and waits
+					// only when that mapping is still unsettled.
 					releaseClaim(claimed, null);
-					awaitFlushSettled();
 					continue;
 				}
 
@@ -287,6 +291,15 @@ public class BufferManager {
 	 * readPageFromDisk let tests stall a flush or a load.
 	 */
 	void afterPageTableRead() {
+	}
+
+	/**
+	 * Hook after a failed or abandoned LOADING claim has left that state.
+	 * Does nothing in production; tests override it to pin at the moment a
+	 * stale observer would, which is how a VALID-with-null publication
+	 * becomes a leaked pin.
+	 */
+	void afterFailedLoadLeftLoading(int frameIndex) {
 	}
 
 	/**
@@ -762,23 +775,21 @@ public class BufferManager {
 	/**
 	 * Hands a claimed frame back after a failed fill, making allocation
 	 * all-or-nothing: the caller either gets a filled frame or leaves the frame
-	 * FREE and sweepable, never stranded where no sweep looks. FrameState has no
-	 * direct LOADING to FREE edge, so an unfilled claim is finished and cleared
-	 * straight back out; a frame that will not unwind is reported as a
-	 * suppressed exception rather than replacing the original failure.
+	 * FREE and sweepable, never stranded where no sweep looks. An unfilled
+	 * LOADING claim aborts straight to FREE without passing through VALID; a
+	 * frame that will not unwind is reported as a suppressed exception rather
+	 * than replacing the original failure.
 	 */
 	private void releaseClaim(int frameIndex, Throwable cause) {
 		Frame frame = bufferPool[frameIndex];
 		if (frame == null) {
 			return;
 		}
-		// An unfilled claim is finished back out through the same door every
-		// other caller uses: markValid lands the frame in VALID, and clear()
-		// then proves ownership by taking the eviction claim before erasing
-		// anything. A refused unwind leaves the frame's fields intact.
 		try {
 			if (frame.state.state() == FrameState.State.LOADING) {
-				frame.markValid();
+				frame.abortLoad();
+				afterFailedLoadLeftLoading(frameIndex);
+				return;
 			}
 			frame.clear();
 		} catch (IllegalStateException e) {
