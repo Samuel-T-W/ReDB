@@ -145,4 +145,30 @@ public class FrameTest {
 		assertNull(frame.pageKey);
 		assertFalse(frame.isDirty);
 	}
+
+	@Test
+	public void abortLoadClearsFieldsBeforePublishingFree() {
+		Frame frame = freeFrame();
+		assertTrue(frame.state.tryBeginLoad());
+		frame.pageKey = new PageKey("f", 1);
+		frame.isDirty = true;
+
+		frame.abortLoad();
+
+		assertEquals(FrameState.State.FREE, frame.state.state());
+		assertEquals(1L, frame.state.version(), "aborting a load is a recycle and must move the version");
+		assertNull(frame.page);
+		assertNull(frame.pageKey);
+		assertFalse(frame.isDirty);
+	}
+
+	@Test
+	public void abortLoadRefusesAFrameThisCallerDoesNotOwn() {
+		Frame frame = freeFrame();
+		fill(frame);
+
+		assertThrows(IllegalStateException.class, frame::abortLoad);
+		assertEquals(FrameState.State.VALID, frame.state.state());
+		assertNotNull(frame.page);
+	}
 }

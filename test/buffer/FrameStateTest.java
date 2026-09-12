@@ -92,6 +92,23 @@ public class FrameStateTest {
 	}
 
 	@Test
+	public void abortLoadReturnsFrameToFreeAndBumpsVersion() {
+		FrameState fs = new FrameState(State.LOADING, 0L, true, 7L);
+		assertTrue(fs.abortLoad());
+		assertEquals(State.FREE, fs.state());
+		assertEquals(0L, fs.pinCount());
+		assertFalse(fs.isReferenced());
+		assertEquals(8L, fs.version(), "aborting a failed load is a recycle and must move the version");
+	}
+
+	@Test
+	public void abortLoadRejectedFromEveryNonLoadingState() {
+		for (State s : new State[] {State.FREE, State.VALID, State.EVICTING, State.FLUSHING}) {
+			assertRejectedAndUnchanged(at(s), FrameState::abortLoad);
+		}
+	}
+
+	@Test
 	public void finishEvictResetsPinCountAndBumpsVersion() {
 		FrameState fs = new FrameState(State.EVICTING, 5L, true, 41L);
 		assertTrue(fs.finishEvict());
@@ -485,6 +502,10 @@ public class FrameStateTest {
 		FrameState fs = new FrameState(freeFrames);
 		assertEquals(1, freeFrames.get(), "a new FREE state counts itself");
 
+		assertTrue(fs.tryBeginLoad());
+		assertEquals(0, freeFrames.get(), "leaving FREE is counted");
+		assertTrue(fs.abortLoad());
+		assertEquals(1, freeFrames.get(), "aborting a load returns the count");
 		assertTrue(fs.tryBeginLoad());
 		assertEquals(0, freeFrames.get(), "leaving FREE is counted");
 		assertFalse(fs.tryBeginLoad());

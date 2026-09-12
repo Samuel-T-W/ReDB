@@ -233,6 +233,28 @@ public final class FrameState {
 		return transition(State.LOADING, State.VALID);
 	}
 
+	/**
+	 * LOADING to FREE, for a load that failed before the frame was published.
+	 * Exclusive to the owned LOADING incarnation: any other state is refused,
+	 * so a reader can never observe VALID over a null page. The version moves
+	 * as it does on every other return to FREE.
+	 */
+	public boolean abortLoad() {
+		for (;;) {
+			long cur = word.get();
+			if (decodeState(cur) != State.LOADING) {
+				return false;
+			}
+			long next = encode(State.FREE, 0L, false, (decodeVersion(cur) + 1) & VERSION_MASK);
+			if (word.compareAndSet(cur, next)) {
+				if (freeFrames != null) {
+					freeFrames.incrementAndGet();
+				}
+				return true;
+			}
+		}
+	}
+
 	/** EVICTING to FLUSHING, for a victim whose page must be written back. */
 	public boolean beginFlush() {
 		return transition(State.EVICTING, State.FLUSHING);
