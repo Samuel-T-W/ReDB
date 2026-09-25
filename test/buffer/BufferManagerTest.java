@@ -338,6 +338,25 @@ public class BufferManagerTest {
 	}
 
 	@Test
+	public void unpinningAnAlreadyUnpinnedPageThrowsAndLeavesTheCountAtZero() throws Exception {
+		Page page = bm.createPage(fileOneName, null);
+		int pid = page.getPid();
+		assertEquals(1, bm.getPinCount(fileOneName, pid));
+
+		bm.unpinPage(fileOneName, pid);
+		assertEquals(0, bm.getPinCount(fileOneName, pid));
+
+		// A second unpin is a caller bug (it would release someone else's pin
+		// if another reader held one), so it must fail loudly, not be ignored.
+		assertThrows(IllegalStateException.class, () -> bm.unpinPage(fileOneName, pid));
+		assertEquals(0, bm.getPinCount(fileOneName, pid));
+
+		// The page is still resident and usable after the rejected unpin.
+		bm.getPage(fileOneName, pid);
+		assertEquals(1, bm.getPinCount(fileOneName, pid));
+	}
+
+	@Test
 	public void testPinCountBehavior() {
 		// Goal: correct pin count semantics.
 		// Setup: get same page twice (pinCount=2), unpin once (pinCount=1), unpin again
