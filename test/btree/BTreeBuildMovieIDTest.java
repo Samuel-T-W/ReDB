@@ -25,7 +25,7 @@ public class BTreeBuildMovieIDTest {
 	// Configuration
 	// -----------------------------------------------------------------------
 
-	private static final String MOVIES_TSV = "data/title.csv";
+	private static final String MOVIES_TSV = "data/fixtures/synthetic/title.csv";
 	private static final String MOVIES_DB = "movies.db";
 	private static final String MOVIEID_INDEX = "movies_id.idx";
 
