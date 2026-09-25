@@ -430,11 +430,15 @@ public class BufferManager {
 				throw new IllegalArgumentException("Page not in buffer: " + pageKey);
 			}
 			Frame frame = bufferPool[frameIndex];
-			// globalLock makes the version read and the unpin one step, so the
-			// guard cannot fire here yet. It becomes load-bearing when the lock
-			// comes off and this lookup stops being atomic with the release.
-			if (frame.state.pinCount() > 0)
-				frame.state.unpin(frame.state.version());
+			// An unpin with no pin to release is a caller bug: silently absorbing
+			// it would hide the mismatch, and with another reader holding a pin it
+			// would release theirs. FrameState.unpin throws when the count is
+			// already zero; a false return means the frame is not VALID, which a
+			// caller that still held a pin could not observe under globalLock.
+			if (!frame.state.unpin(frame.state.version())) {
+				throw new IllegalStateException("unpin of a page this caller does not hold pinned: "
+						+ pageKey + " is " + FrameState.describe(frame.state.snapshot()));
+			}
 		} finally {
 			globalLock.unlock();
 		}

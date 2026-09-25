@@ -8,7 +8,11 @@ public class Frame {
 	// FrameState[], so every pin/unpin is one CAS on shared state.
 	public final FrameState state;
 	public Page page;
-	public boolean isDirty;
+	// volatile: markDirty sets this without globalLock (the caller's pin is its
+	// only exclusion), while force and eviction read and clear it under the lock.
+	// Without volatile nothing orders that write before those reads, so a flush
+	// could see a stale false and drop the page's newest bytes.
+	public volatile boolean isDirty;
 	public PageKey pageKey;
 
 	public int frameIndex; // value persisted through clear's as it's attached to the index in buffer pool
