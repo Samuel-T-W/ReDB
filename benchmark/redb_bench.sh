@@ -193,6 +193,10 @@ for c in $CONCURRENCY_LEVELS; do
       continue
     fi
     echo ">>> ${label}: 1 JVM, -Xmx${B_XMX_MB}m, ${B_FRAMES_PER_JVM} shared frames (${per_query}/query)"
+    # EngineBenchmark creates the metrics file with CREATE_NEW, so clear any
+    # file left by an earlier run, the same way tee overwrites the log.
+    metrics="${OUTDIR}/${label}.metrics"
+    rm -f "$metrics"
     drop_caches
     start=$(date +%s)
     in_cgroup "redb-${label}" \
@@ -204,6 +208,7 @@ for c in $CONCURRENCY_LEVELS; do
         --repetitions "$REPETITIONS" \
         --warmups "$WARMUPS" \
         --output-dir "$OUTDIR" \
+        --result-file "$metrics" \
       2>&1 | tee "${OUTDIR}/${label}.log" || echo "!!! ${label} exited non-zero"
     echo "<<< ${label} took $(( $(date +%s) - start ))s"
     echo

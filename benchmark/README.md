@@ -231,16 +231,23 @@ setsid nohup ./benchmark/redb_bench.sh --mode shared > ~/bench.log 2>&1 < /dev/n
 ```
 
 `setsid nohup` is required, not tidiness.
-The benchmark outlives any single SSH session, and a client that disconnects or is backgrounded takes the remote JVM down with it, leaving query output but no `engine.metrics`.
+The benchmark outlives any single SSH session, and a client that disconnects or is backgrounded takes the remote JVM down with it, leaving stray `redb-engine-benchmark-*.csv` query outputs but no metrics file.
 
 `redb_bench.sh` needs `sudo` for `systemd-run` and for dropping caches, so it cannot run under a non-interactive key without passwordless sudo.
 
-Budget roughly 33, 28, and 21 minutes for shared concurrency 1, 2, and 4, about 83 minutes for the sweep.
+Each shared step writes `shared-c<N>.log` (console output) and `shared-c<N>.metrics` (the `REDB_ENGINE_*` metrics lines) to the output directory, `/data/ReDB/benchmark/results-budgeted` by default.
+A rerun into the same directory replaces both files.
+
+Budget roughly 33, 28, and 21 minutes of wall-clock time for shared concurrency 1, 2, and 4, about 83 minutes for the sweep.
+That is the `<<< shared-c<N> took` figure the script prints, and it covers JVM startup, the sequential baselines, the warmup, and result validation as well as the measured repetitions.
 `--mode both` also runs the legacy multi-JVM path and roughly doubles that.
 
 ## Reference numbers
 
-From the archived 2026-08-16 run, 4 GiB cgroup, swap disabled, caches dropped, 3 repetitions:
+From the archived 2026-08-16 run, 4 GiB cgroup, swap disabled, caches dropped, 3 repetitions.
+A makespan is one repetition: it starts when every client thread is ready and ends when the last query of that repetition returns, so it excludes JVM startup, baselines, warmups, and validation.
+The mean is over the 3 repetitions.
+`EngineBenchmark` counts read I/Os from the start of the first measured repetition to the end of the last, so the figure is a total across all 3 repetitions, not a per-repetition figure.
 
 | clients | mean makespan | read I/Os |
 | --- | --- | --- |
