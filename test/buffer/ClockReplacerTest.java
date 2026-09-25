@@ -181,8 +181,8 @@ public class ClockReplacerTest {
 	// ----------------------------------------------------------- concurrency
 
 	/**
-	 * A sweep is budgeted at two passes over the pool, so a sweeper that comes
-	 * back empty is asserting "nothing here is evictable". These tests therefore
+	 * A sweep gives up only after two passes that met no unpinned frame, so a
+	 * sweeper that comes back empty is asserting "nothing here is evictable". These tests therefore
 	 * pin down both halves of the contract: no frame reaches two callers, and
 	 * every evictable frame reaches one. The second half is what makes them
 	 * fail against a {@code findVictim()} stubbed to return empty — without it

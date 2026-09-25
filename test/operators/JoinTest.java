@@ -151,6 +151,8 @@ public class JoinTest {
         assertTrue(titles.contains("The Shining"));
         assertTrue(titles.contains("2001"));
         assertTrue(titles.contains("Psycho"));
+        assertEquals(0, bm.getTotalPinCount());
+        assertTrue(bm.getLockFreeUnpinCount() > 0);
     }
 
     /**

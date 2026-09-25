@@ -190,6 +190,8 @@ public class ProjectTest {
 
         assertEquals(List.of("tt0000001", "tt0000002", "tt0000003"), movieIds);
         assertEquals(List.of("nm0000001", "nm0000002", "nm0000003"), personIds);
+        assertEquals(0, bm.getTotalPinCount());
+        assertTrue(bm.getLockFreeUnpinCount() > 0);
     }
 
     /**

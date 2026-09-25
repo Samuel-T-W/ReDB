@@ -15,14 +15,24 @@ import java.util.concurrent.atomic.LongAdder;
  * bit cleared), or claimed with {@link FrameState#tryClaimForEviction()} — the
  * exclusive handoff that guarantees a frame is never returned to two callers.
  *
- * <p>A sweep is bounded at roughly two passes over the pool. When everything is
- * pinned the selector returns {@link OptionalInt#empty()} rather than spinning
- * or throwing; deciding what to do about a full pool is the caller's business.
+ * <p>A sweep gives up only after two consecutive passes in which every frame
+ * it examined was pinned or not VALID. A pass that met an unpinned frame but
+ * could not claim it (its reference bit was set, or a lock-free hit touched it
+ * in the gap) does not count toward that limit: hits and unpins run
+ * concurrently with the sweep, so such a frame may be claimable on the next
+ * pass, and giving up would report a full pool that is not full. A hard cap on
+ * total passes keeps a pool whose unpinned frames are re-referenced faster
+ * than the hand moves from spinning forever. When nothing is evictable the
+ * selector returns {@link OptionalInt#empty()} rather than throwing; deciding
+ * what to do about a full pool is the caller's business.
  */
 public final class ClockReplacer {
 
-	/** Frames examined per {@link #findVictim()} call, as a multiple of the pool size. */
-	private static final int SWEEP_PASSES = 2;
+	/** Consecutive passes that find no unpinned VALID frame before a sweep gives up. */
+	private static final int IDLE_PASSES_TO_GIVE_UP = 2;
+
+	/** Upper bound on passes per {@link #findVictim()} call, however contended. */
+	private static final int MAX_SWEEP_PASSES = 64;
 
 	private final FrameState[] frames;
 	private final AtomicInteger hand = new AtomicInteger();
@@ -61,33 +71,38 @@ public final class ClockReplacer {
 		if (n == 0) {
 			return OptionalInt.empty();
 		}
-		final int budget = SWEEP_PASSES * n;
-		for (int examined = 0; examined < budget; examined++) {
-			int index = position(hand.getAndIncrement(), n);
-			FrameState frame = frames[index];
+		int idlePasses = 0;
+		for (int pass = 0; pass < MAX_SWEEP_PASSES && idlePasses < IDLE_PASSES_TO_GIVE_UP; pass++) {
+			boolean sawCandidate = false;
+			for (int examined = 0; examined < n; examined++) {
+				int index = position(hand.getAndIncrement(), n);
+				FrameState frame = frames[index];
 
-			// One consistent observation decides whether this frame is even a
-			// candidate; the claim below re-validates it atomically.
-			long word = frame.snapshot();
-			if (FrameState.decodeState(word) != FrameState.State.VALID) {
-				continue;
+				// One consistent observation decides whether this frame is even a
+				// candidate; the claim below re-validates it atomically.
+				long word = frame.snapshot();
+				if (FrameState.decodeState(word) != FrameState.State.VALID) {
+					continue;
+				}
+				if (FrameState.decodePinCount(word) > 0) {
+					continue;
+				}
+				sawCandidate = true;
+				if (FrameState.decodeReferenced(word)) {
+					// Second chance: cost it a sweep rather than evicting a frame
+					// that was touched since the hand last passed. Guarded by the
+					// snapshot above, so a reader that pinned the frame in the gap
+					// keeps the reference bit it just set.
+					frame.clearReferenced(word);
+					continue;
+				}
+				if (frame.tryClaimForEviction()) {
+					return OptionalInt.of(index);
+				}
+				// Lost the race, or the frame was pinned or re-referenced in the
+				// gap. Move on; the hand has already advanced past it.
 			}
-			if (FrameState.decodePinCount(word) > 0) {
-				continue;
-			}
-			if (FrameState.decodeReferenced(word)) {
-				// Second chance: cost it a sweep rather than evicting a frame
-				// that was touched since the hand last passed. Guarded by the
-				// snapshot above, so a reader that pinned the frame in the gap
-				// keeps the reference bit it just set.
-				frame.clearReferenced(word);
-				continue;
-			}
-			if (frame.tryClaimForEviction()) {
-				return OptionalInt.of(index);
-			}
-			// Lost the race, or the frame was pinned or re-referenced in the
-			// gap. Move on; the hand has already advanced past it.
+			idlePasses = sawCandidate ? 0 : idlePasses + 1;
 		}
 		return OptionalInt.empty();
 	}
