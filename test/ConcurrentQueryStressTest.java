@@ -3,8 +3,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import buffer.BufferManager;
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -15,6 +18,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import storage.GenericPage;
+import storage.GenericRecord;
+import storage.Page;
+import storage.RawPage;
+import util.RecordUtils;
 
 /**
  * Multi-query stress test against one shared BufferManager.
@@ -41,19 +49,6 @@ public class ConcurrentQueryStressTest {
 	private static final Set<String> BASE_FILES =
 			Set.of("movies.db", "workedon.db", "people.db", "title.idx");
 
-	// Title ranges over the dataset loaded by PreProcessor. Several overlap so
-	// concurrent queries hit the same base-table pages.
-	private static final String[][] RANGES = {
-			{"carmencita", "carmencita-0099"},
-			{"carmencita-0100", "carmencita-0299"},
-			{"carmencita-0200", "carmencita-0399"},
-			{"carmencita-0350", "carmencita-0549"},
-			{"carmencita-1000", "carmencita-1499"},
-			{"carmencita-1250", "carmencita-1749"},
-			{"carmencita-2000", "carmencita-2199"},
-			{"carmencita-3000", "carmencita-3999"},
-	};
-
 	@TempDir
 	static Path tempDir;
 
@@ -74,6 +69,57 @@ public class ConcurrentQueryStressTest {
 	// ----------------------
 	// Sequential plumbing: shared manager reused across queries, one at a time
 	// ----------------------
+
+	@Test
+	public void concurrentRangesOwnExclusiveMoviePages() throws IOException {
+		int titleLength = RunQuery.MOVIES_SCHEMA.get("title");
+		List<Set<Integer>> pagesByRange = new ArrayList<>();
+		List<byte[]> starts = new ArrayList<>();
+		List<byte[]> ends = new ArrayList<>();
+		for (ConcurrentQueryRanges.TitleRange range : ConcurrentQueryRanges.all()) {
+			pagesByRange.add(new HashSet<>());
+			starts.add(RecordUtils.toFixedBytes(range.start(), titleLength));
+			ends.add(RecordUtils.toFixedBytes(range.end(), titleLength));
+		}
+
+		BufferManager bm = new BufferManager(16);
+		int pageCount = RawPage.pageCount(RunQuery.MOVIES_DB, new File(RunQuery.MOVIES_DB).length());
+		for (int pageId = 0; pageId < pageCount; pageId++) {
+			Page page = bm.getPage(RunQuery.MOVIES_DB, pageId);
+			try {
+				GenericPage moviePage = new GenericPage(page, RunQuery.MOVIES_SCHEMA);
+				int recordCount = ByteBuffer.wrap(moviePage.getByteArray(), 0, Integer.BYTES).getInt();
+				for (int slotId = 0; slotId < recordCount; slotId++) {
+					GenericRecord movie = (GenericRecord) moviePage.getRecord(slotId);
+					byte[] title = movie.getFieldBytes("title");
+					for (int rangeIndex = 0;
+							rangeIndex < ConcurrentQueryRanges.size();
+							rangeIndex++) {
+						if (Arrays.compare(title, starts.get(rangeIndex)) >= 0
+								&& Arrays.compare(title, ends.get(rangeIndex)) <= 0) {
+							pagesByRange.get(rangeIndex).add(pageId);
+						}
+					}
+				}
+			} finally {
+				bm.unpinPage(RunQuery.MOVIES_DB, pageId);
+			}
+		}
+
+		for (int rangeIndex = 0; rangeIndex < pagesByRange.size(); rangeIndex++) {
+			Set<Integer> pages = pagesByRange.get(rangeIndex);
+			assertFalse(pages.isEmpty(), "range " + rangeIndex + " must cover a movie page");
+
+			for (int otherIndex = 0; otherIndex < pagesByRange.size(); otherIndex++) {
+				if (otherIndex != rangeIndex) {
+					assertTrue(
+							java.util.Collections.disjoint(pages, pagesByRange.get(otherIndex)),
+							"ranges " + rangeIndex + " and " + otherIndex
+									+ " must not share movie pages");
+				}
+			}
+		}
+	}
 
 	@Test
 	public void sequentialQueriesOnSharedManagerMatchBaselineScan() throws IOException {
@@ -101,7 +147,7 @@ public class ConcurrentQueryStressTest {
 
 	private void assertSequentialSharedMatchesBaseline(boolean useIndex) throws IOException {
 		List<List<String>> baselines = new ArrayList<>();
-		for (int i = 0; i < RANGES.length; i++) {
+		for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 			baselines.add(computeBaseline(i, useIndex));
 		}
 
@@ -110,9 +156,11 @@ public class ConcurrentQueryStressTest {
 		// Re-registering must be harmless (idempotent catalog registration)
 		RunQuery.registerCatalog(shared);
 
-		for (int i = 0; i < RANGES.length; i++) {
+		for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
+			ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(i);
 			Path out = tempDir.resolve("seq-" + useIndex + "-" + i + ".csv");
-			RunQuery.run(RANGES[i][0], RANGES[i][1], QUERY_FRAME_BUDGET, useIndex, shared, out);
+			RunQuery.run(
+					range.start(), range.end(), QUERY_FRAME_BUDGET, useIndex, shared, out);
 			assertEquals(
 					baselines.get(i),
 					SequentialBaselines.sortedRows(out),
@@ -123,22 +171,24 @@ public class ConcurrentQueryStressTest {
 
 	private void assertConcurrentSharedMatchesBaseline(boolean useIndex) throws Exception {
 		List<List<String>> baselines = new ArrayList<>();
-		for (int i = 0; i < RANGES.length; i++) {
+		for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 			baselines.add(computeBaseline(i, useIndex));
 		}
 
 		BufferManager shared = new BufferManager(SHARED_POOL_SIZE);
 		RunQuery.registerCatalog(shared);
 
-		ExecutorService pool = Executors.newFixedThreadPool(RANGES.length);
+		ExecutorService pool = Executors.newFixedThreadPool(ConcurrentQueryRanges.size());
 		try {
 			List<Future<List<String>>> futures = new ArrayList<>();
-			for (int i = 0; i < RANGES.length; i++) {
+			for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 				final int q = i;
 				futures.add(pool.submit(() -> {
+					ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(q);
 					Path out = tempDir.resolve(
 							"concurrent-" + useIndex + "-" + q + "-" + System.nanoTime() + ".csv");
-					RunQuery.run(RANGES[q][0], RANGES[q][1], QUERY_FRAME_BUDGET, useIndex, shared, out);
+					RunQuery.run(
+							range.start(), range.end(), QUERY_FRAME_BUDGET, useIndex, shared, out);
 					return SequentialBaselines.sortedRows(out);
 				}));
 			}
@@ -165,19 +215,20 @@ public class ConcurrentQueryStressTest {
 		QueryEngine engine = new QueryEngine(36, 4);
 
 		List<List<String>> baselines = new ArrayList<>();
-		for (int i = 0; i < RANGES.length; i++) {
+		for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 			baselines.add(computeBaseline(i, useIndexFor(i)));
 		}
 
-		ExecutorService pool = Executors.newFixedThreadPool(RANGES.length);
+		ExecutorService pool = Executors.newFixedThreadPool(ConcurrentQueryRanges.size());
 		try {
 			List<Future<List<String>>> futures = new ArrayList<>();
-			for (int i = 0; i < RANGES.length; i++) {
+			for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 				final int q = i;
 				futures.add(pool.submit(() -> {
+					ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(q);
 					Path out = tempDir.resolve(
 							"engine-e2e-" + q + "-" + System.nanoTime() + ".csv");
-					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					engine.runQuery(range.start(), range.end(), useIndexFor(q), out);
 					return SequentialBaselines.sortedRows(out);
 				}));
 			}
@@ -214,27 +265,29 @@ public class ConcurrentQueryStressTest {
 		long concurrentMillis = (System.nanoTime() - concurrentStart) / 1_000_000;
 
 		System.out.printf("QueryEngine timing for %d mixed queries: serial %d ms, concurrent %d ms%n",
-				RANGES.length, serialMillis, concurrentMillis);
+				ConcurrentQueryRanges.size(), serialMillis, concurrentMillis);
 	}
 
 	/** Runs all ranges through the engine, one at a time or all at once. */
 	private void runAllThroughEngine(QueryEngine engine, boolean concurrent) throws Exception {
 		if (!concurrent) {
-			for (int i = 0; i < RANGES.length; i++) {
+			for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
+				ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(i);
 				Path out = tempDir.resolve("engine-serial-" + i + "-" + System.nanoTime() + ".csv");
-				engine.runQuery(RANGES[i][0], RANGES[i][1], useIndexFor(i), out);
+				engine.runQuery(range.start(), range.end(), useIndexFor(i), out);
 			}
 			return;
 		}
-		ExecutorService pool = Executors.newFixedThreadPool(RANGES.length);
+		ExecutorService pool = Executors.newFixedThreadPool(ConcurrentQueryRanges.size());
 		try {
 			List<Future<?>> futures = new ArrayList<>();
-			for (int i = 0; i < RANGES.length; i++) {
+			for (int i = 0; i < ConcurrentQueryRanges.size(); i++) {
 				final int q = i;
 				futures.add(pool.submit(() -> {
+					ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(q);
 					Path out = tempDir.resolve(
 							"engine-timed-" + q + "-" + System.nanoTime() + ".csv");
-					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					engine.runQuery(range.start(), range.end(), useIndexFor(q), out);
 					return null;
 				}));
 			}
@@ -253,10 +306,11 @@ public class ConcurrentQueryStressTest {
 
 	/** Runs one range serially on a fresh private manager. */
 	private static List<String> computeBaseline(int rangeIndex, boolean useIndex) throws IOException {
+		ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(rangeIndex);
 		Path out = tempDir.resolve("baseline-mixed-" + rangeIndex + "-" + System.nanoTime() + ".csv");
 		List<String> rows = SequentialBaselines.compute(
 				new SequentialBaselines.Spec(
-						RANGES[rangeIndex][0], RANGES[rangeIndex][1], useIndex),
+						range.start(), range.end(), useIndex),
 				SHARED_POOL_SIZE,
 				QUERY_FRAME_BUDGET,
 				out);

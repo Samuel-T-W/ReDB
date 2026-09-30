@@ -33,17 +33,6 @@ public class QueryEngineTest {
 	// pages plus one transient scan/index pin, i.e. exactly 9.
 	private static final int QUERY_FRAME_BUDGET = 9;
 
-	private static final String[][] RANGES = {
-			{"carmencita", "carmencita-0099"},
-			{"carmencita-0100", "carmencita-0299"},
-			{"carmencita-0200", "carmencita-0399"},
-			{"carmencita-0350", "carmencita-0549"},
-			{"carmencita-1000", "carmencita-1499"},
-			{"carmencita-1250", "carmencita-1749"},
-			{"carmencita-2000", "carmencita-2199"},
-			{"carmencita-3000", "carmencita-3999"},
-	};
-
 	@TempDir
 	static Path tempDir;
 
@@ -67,6 +56,39 @@ public class QueryEngineTest {
 	}
 
 	@Test
+	public void scanAndIndexQueriesCompleteAtMinimumFrameBudget() throws Exception {
+		QueryEngine engine = new QueryEngine(RunQuery.MIN_FRAME_BUDGET, 1);
+		assertEquals(RunQuery.MIN_FRAME_BUDGET, engine.getFrameBudget());
+		assertEquals(1, RunQuery.blockPagesPerJoin(engine.getFrameBudget()));
+
+		ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(4);
+		for (boolean useIndex : new boolean[]{false, true}) {
+			Path out = tempDir.resolve("min-budget-" + useIndex + ".csv");
+			long rows = engine.runQuery(range.start(), range.end(), useIndex, out);
+			assertTrue(rows > 0, "minimum-budget join must produce rows with index=" + useIndex);
+			assertEquals(0, engine.getBufferManager().getTotalPinCount(),
+					"all pages must be unpinned after the query closes");
+		}
+	}
+
+	@Test
+	public void validPoolsReserveWorkingFramesForEveryAdmittedQuery() {
+		for (int maxConcurrent = 1; maxConcurrent <= 8; maxConcurrent++) {
+			for (int bufferSize = maxConcurrent * RunQuery.MIN_FRAME_BUDGET;
+					bufferSize <= 64;
+					bufferSize++) {
+				int budget = bufferSize / maxConcurrent;
+				int blockPages = RunQuery.blockPagesPerJoin(budget);
+				int peakPinsPerQuery = 2 * blockPages + RunQuery.WORKING_FRAMES;
+				assertTrue(
+						maxConcurrent * peakPinsPerQuery <= bufferSize,
+						"pool " + bufferSize + " with " + maxConcurrent
+								+ " permits must cover every query's peak pins");
+			}
+		}
+	}
+
+	@Test
 	public void queriesBeyondSinglePermitQueueAndComplete() throws Exception {
 		// A 9-frame pool fits exactly ONE query at peak. Four queries submitted
 		// at once can only all succeed if admission serializes them: a second
@@ -83,7 +105,7 @@ public class QueryEngineTest {
 		// five of them must queue; all eight must still complete correctly.
 		QueryEngine engine = new QueryEngine(27, 3);
 		assertEquals(9, engine.getFrameBudget());
-		runConcurrentlyAndAssertBaselines(engine, RANGES.length);
+		runConcurrentlyAndAssertBaselines(engine, ConcurrentQueryRanges.size());
 	}
 
 	/**
@@ -95,7 +117,8 @@ public class QueryEngineTest {
 			throws Exception {
 		List<List<String>> baselines = new ArrayList<>();
 		for (int i = 0; i < queryCount; i++) {
-			baselines.add(computeBaseline(RANGES[i][0], RANGES[i][1], useIndexFor(i)));
+			ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(i);
+			baselines.add(computeBaseline(range.start(), range.end(), useIndexFor(i)));
 		}
 
 		ExecutorService pool = Executors.newFixedThreadPool(queryCount);
@@ -104,9 +127,10 @@ public class QueryEngineTest {
 			for (int i = 0; i < queryCount; i++) {
 				final int q = i;
 				futures.add(pool.submit(() -> {
+					ConcurrentQueryRanges.TitleRange range = ConcurrentQueryRanges.get(q);
 					Path out = tempDir.resolve(
 							"engine-" + q + "-" + System.nanoTime() + ".csv");
-					engine.runQuery(RANGES[q][0], RANGES[q][1], useIndexFor(q), out);
+					engine.runQuery(range.start(), range.end(), useIndexFor(q), out);
 					return SequentialBaselines.sortedRows(out);
 				}));
 			}
