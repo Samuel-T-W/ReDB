@@ -1,6 +1,7 @@
 package testutil;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -8,6 +9,7 @@ import java.util.Map;
 import storage.GenericPage;
 import storage.GenericRecord;
 import storage.K;
+import storage.RawPage;
 import util.RecordUtils;
 
 public final class TestUtils {
@@ -47,21 +49,23 @@ public final class TestUtils {
 
 	public static int writePages(BufferManager bm, String fileId, Map<String, Integer> schema,
 			List<GenericRecord> records) throws IOException {
-		GenericPage page = new GenericPage(bm.createPage(fileId, null), schema);
+		PageHandle handle = bm.createPinnedPage(fileId, null);
+		GenericPage page = new GenericPage((RawPage) handle.page(), schema);
 		int pageCount = 1;
 
 		for (GenericRecord rec : records) {
 			if (page.isFull()) {
 				bm.markDirty(fileId, page.getPid());
-				bm.unpinPage(fileId, page.getPid());
-				page = new GenericPage(bm.createPage(fileId, null), schema);
+				bm.unpinPage(handle);
+				handle = bm.createPinnedPage(fileId, null);
+				page = new GenericPage((RawPage) handle.page(), schema);
 				pageCount++;
 			}
 			page.insertRecord(rec);
 		}
 
 		bm.markDirty(fileId, page.getPid());
-		bm.unpinPage(fileId, page.getPid());
+		bm.unpinPage(handle);
 		bm.force();
 		return pageCount;
 	}

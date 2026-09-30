@@ -37,7 +37,7 @@ public class BTreeValidationTest {
 	// Configuration
 	// -----------------------------------------------------------------------
 
-	private static final String MOVIES_TSV = "data/title.csv";
+	private static final String MOVIES_TSV = "data/fixtures/synthetic/title.csv";
 	private static final String MOVIES_DB = "movies.db";
 	private static final String TITLE_INDEX = "movies_title.idx";
 	private static final String MOVIEID_INDEX = "movies_movieid.idx";

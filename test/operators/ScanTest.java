@@ -180,4 +180,35 @@ public class ScanTest {
 
         assertEquals(List.of("One", "Two"), results);
     }
+
+    @Test
+    void secondScanOfResidentPagesTakesNoGlobalLock() throws Exception {
+        List<GenericRecord> records = List.of(
+                makeMovieRecord(SCHEMA, "tt0000001", "Alpha"),
+                makeMovieRecord(SCHEMA, "tt0000002", "Beta")
+        );
+        writePages(bm, filePath, SCHEMA, records);
+
+        Scan warmup = new Scan(bm, filePath, SCHEMA);
+        warmup.open();
+        while (warmup.next() != null) {}
+        warmup.close();
+
+        bm.resetIOCounts();
+        Scan scan = new Scan(bm, filePath, SCHEMA);
+        scan.open();
+        int count = 0;
+        while (scan.next() != null) {
+            count++;
+        }
+        scan.close();
+
+        assertEquals(2, count);
+        assertEquals(0, bm.getReadIOCount(), "the page is still in the pool");
+        assertTrue(bm.getLockFreeHitCount() > 0);
+        assertTrue(bm.getLockFreeUnpinCount() > 0);
+        assertEquals(0, bm.getGlobalLockAcquisitions(),
+                "a resident scan must pin and unpin without globalLock");
+        assertEquals(0, bm.getTotalPinCount());
+    }
 }

@@ -24,7 +24,7 @@ public class End2EndTest {
 	// ----------------------
 	// Shared config (edit once)
 	// ----------------------
-	private static final String MOVIES_TSV = "data/title.csv";
+	private static final String MOVIES_TSV = "data/fixtures/synthetic/title.csv";
 	private static final String MOVIES_DB = "movies.db";
 	private static final int PAGE_SIZE = 4096;
 	private static final int BUFFER_SIZE = 4;
@@ -618,6 +618,16 @@ public class End2EndTest {
 			raf.readFully(current_data);
 		} catch (IOException e) {
 			System.out.println("READ DATABASE FAIL!");
+		}
+
+		// Take the page back before touching it again: the unpin above gave it
+		// up, and an unpinned frame may be evicted and refilled at any moment,
+		// which would land these inserts on whatever page took its place.
+		try {
+			bm.getPage(MOVIES_DB, page.getPid());
+		} catch (IOException e) {
+			fail("RE-PIN PAGE 0 FAILED", e);
+			return;
 		}
 
 		// Read TSV file

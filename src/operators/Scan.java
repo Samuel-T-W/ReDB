@@ -1,6 +1,7 @@
 package operators;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -8,7 +9,6 @@ import java.util.Map;
 import java.util.Objects;
 import storage.GenericPage;
 import storage.GenericRecord;
-import storage.Page;
 import storage.RawPage;
 
 public class Scan implements Operator {
@@ -44,9 +44,9 @@ public class Scan implements Operator {
         while (currentPage < numPages) {
             int pageId = currentPage;
             try {
-                Page page = bm.getPage(fileId, pageId);
+                PageHandle handle = bm.pinPage(fileId, pageId);
                 try {
-                    GenericPage gp = new GenericPage(page, schema);
+                    GenericPage gp = new GenericPage(handle.page(), schema);
 
                     if (currentNumRecords == -1) {
                         byte[] raw = gp.getByteArray();
@@ -70,7 +70,7 @@ public class Scan implements Operator {
                         currentNumRecords = -1;
                     }
                 } finally {
-                    bm.unpinPage(fileId, pageId);
+                    bm.unpinPage(handle);
                 }
             } catch (IOException e) {
                 throw new RuntimeException(e);

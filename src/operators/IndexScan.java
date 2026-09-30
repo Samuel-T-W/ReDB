@@ -1,6 +1,7 @@
 package operators;
 
 import buffer.BufferManager;
+import buffer.PageHandle;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
@@ -8,7 +9,6 @@ import storage.BTreeManager;
 import storage.GenericPage;
 import storage.GenericRecord;
 import storage.K;
-import storage.Page;
 import storage.RecordId;
 
 public class IndexScan implements Operator {
@@ -47,10 +47,14 @@ public class IndexScan implements Operator {
         if (rids == null || !rids.hasNext()) return null;
         RecordId rid = rids.next();
         try {
-            Page page = bm.getPage(tableFileId, rid.pageId());
-            GenericRecord rec = (GenericRecord) new GenericPage(page, schema).getRecord(rid.slotId());
-            bm.unpinPage(tableFileId, rid.pageId());
-            return rec;
+            PageHandle handle = bm.pinPage(tableFileId, rid.pageId());
+            try {
+                GenericRecord rec = (GenericRecord) new GenericPage(handle.page(), schema)
+                        .getRecord(rid.slotId());
+                return rec;
+            } finally {
+                bm.unpinPage(handle);
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

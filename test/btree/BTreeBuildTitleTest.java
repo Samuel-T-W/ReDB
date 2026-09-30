@@ -23,7 +23,7 @@ public class BTreeBuildTitleTest {
 	// Configuration
 	// -----------------------------------------------------------------------
 
-	private static final String MOVIES_TSV = "data/title.csv";
+	private static final String MOVIES_TSV = "data/fixtures/synthetic/title.csv";
 	private static final String MOVIES_DB = "movies.db";
 	private static final String TITLE_INDEX = "movies_title.idx";
 
