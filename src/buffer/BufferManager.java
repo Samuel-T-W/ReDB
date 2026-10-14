@@ -1,8 +1,12 @@
 package buffer;
 
 import catalog.CatalogEntry;
+import java.io.EOFException;
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.channels.ClosedChannelException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,6 +29,8 @@ public class BufferManager {
 	final int bufferSize;
 
 	private final Map<String, CatalogEntry> catalog;
+	private final ConcurrentHashMap<String, FileHandle> fileHandles = new ConcurrentHashMap<>();
+	private final LongAdder channelOpenCount = new LongAdder();
 	private Map<String, FileState> fileStates = new HashMap<>();
 	private final ReentrantLock fileStatesLock = new ReentrantLock();
 	private final ConcurrentMap<PageKey, Integer> pageTable;
@@ -103,9 +109,15 @@ public class BufferManager {
 	// Remove a table or index from the system catalog. Per-query temp tables
 	// are unregistered on the query's close path so a long-lived shared
 	// manager's catalog does not accumulate dead entries. Removing an absent
-	// entry is harmless.
+	// entry is harmless. Also closes and removes the file's channel handle.
 	public void unregister(String fileName) {
 		catalog.remove(fileName);
+		FileHandle handle = fileHandles.remove(fileName);
+		try {
+			if (handle != null) handle.close();
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
 	}
 
 	public CatalogEntry getCatalogEntry(String fileName) {
@@ -662,12 +674,32 @@ public class BufferManager {
 	/** Write a page to disk. Overridable so tests can stall or fail a flush. */
 	void writePageToDisk(String fileId, Page page) throws IOException {
 		writeIOCount.increment();
-		try (RandomAccessFile raf = new RandomAccessFile(fileId, "rw")) {
-			long offset = RawPage.getOffset(page.getPid());
-			raf.seek(offset);
-			raf.write(page.getByteArray());
+		transferPage(fileId, ByteBuffer.wrap(page.getByteArray()), RawPage.getOffset(page.getPid()), true);
+	}
+
+	private void transferPage(String fileId, ByteBuffer buffer, long offset, boolean write) throws IOException {
+		for (int attempt = 0; ; attempt++) {
+			FileHandle handle = fileHandles.computeIfAbsent(fileId, key -> new FileHandle());
+			var channel = handle.channel(fileId, write, channelOpenCount);
+			// unregister may have removed this handle while its channel was opening.
+			if (fileHandles.get(fileId) != handle) handle.close();
+			try {
+				buffer.rewind();
+				while (buffer.hasRemaining()) {
+					long position = offset + buffer.position();
+					if (write) channel.write(buffer, position);
+					else if (channel.read(buffer, position) < 0) throw new EOFException();
+				}
+				return;
+			} catch (ClosedByInterruptException e) {
+				throw e;
+			} catch (ClosedChannelException e) {
+				if (Thread.currentThread().isInterrupted() || attempt >= 2) throw e;
+			}
 		}
 	}
+
+	long getChannelOpenCount() { return channelOpenCount.sum(); }
 
 	/**
 	 * Places a page into a free frame, evicting if needed. Must be called with
@@ -746,10 +778,7 @@ public class BufferManager {
 	RawPage readPageFromDisk(PageKey pageKey) throws IOException {
 		readIOCount.increment();
 		byte[] loaded_data = new byte[RawPage.MAX_PAGE_LEN];
-		try (RandomAccessFile raf = new RandomAccessFile(pageKey.fileId(), "r")) {
-			raf.seek(RawPage.getOffset(pageKey.pageId()));
-			raf.readFully(loaded_data);
-		}
+		transferPage(pageKey.fileId(), ByteBuffer.wrap(loaded_data), RawPage.getOffset(pageKey.pageId()), false);
 		RawPage page = new RawPage(pageKey.pageId());
 		page.fillPageData(loaded_data);
 		return page;
