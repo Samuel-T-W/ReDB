@@ -7,6 +7,7 @@ import java.io.FileNotFoundException;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +69,21 @@ class BufferManagerFileHandleTest {
 		bm.unregister(file);
 		assertArrayEquals(new byte[4096], bm.getPage(file, 1).getByteArray());
 		assertEquals(2, bm.getChannelOpenCount());
+	}
+
+	@Test
+	void readOnlyFileReturnsItsBytes() throws Exception {
+		byte[] bytes = new byte[8192];
+		Path path = Files.write(directory.resolve("readonly"), bytes);
+		file = path.toString();
+		var permissions = Files.getPosixFilePermissions(path);
+		Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("r--r--r--"));
+		try {
+			byte[] expected = new byte[4096];
+			assertArrayEquals(expected, bm.getPage(file, 0).getByteArray());
+		} finally {
+			Files.setPosixFilePermissions(path, permissions);
+		}
 	}
 
 	@Test

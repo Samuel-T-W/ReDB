@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Set;
@@ -22,9 +23,14 @@ final class FileHandle {
 			if (Thread.currentThread().isInterrupted()) throw new ClosedByInterruptException();
 			FileChannel opened;
 			try {
-				opened = FileChannel.open(Path.of(fileId), write
-						? Set.of(StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE)
-						: Set.of(StandardOpenOption.READ, StandardOpenOption.WRITE));
+				try {
+					opened = FileChannel.open(Path.of(fileId), write
+							? Set.of(StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE)
+							: Set.of(StandardOpenOption.READ, StandardOpenOption.WRITE));
+				} catch (AccessDeniedException e) {
+					if (write) throw e;
+					opened = FileChannel.open(Path.of(fileId), StandardOpenOption.READ);
+				}
 			} catch (IOException e) {
 				// RandomAccessFile reported open failures as FileNotFoundException.
 				throw (FileNotFoundException) new FileNotFoundException(e.getMessage()).initCause(e);
