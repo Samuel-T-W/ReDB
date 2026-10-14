@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Per-query frame charges, shared by pins and future prefetch reservations.
+ * Per-query frame charges, shared by pins and bounded prefetch reservations.
  * One query runs on one thread, so a thread binding covers every pin path,
  * including BTreeManager, without passing a budget through every operator.
  */
@@ -12,12 +12,21 @@ public final class FrameBudget {
 
 	private static final ThreadLocal<FrameBudget> CURRENT = new ThreadLocal<>();
 	private final int limit;
+	private final int prefetchReserve;
+	private int prefetchCharged; // guarded by this; releases can run on loader threads
 	private final AtomicInteger charged = new AtomicInteger();
 	private final AtomicInteger peakCharged = new AtomicInteger();
 
 	public FrameBudget(int limit) {
+		this(limit, 0);
+	}
+
+	public FrameBudget(int limit, int prefetchReserve) {
 		if (limit < 0) throw new IllegalArgumentException("negative frame budget: " + limit);
+		if (prefetchReserve < 0 || prefetchReserve > limit)
+			throw new IllegalArgumentException("invalid prefetch reserve: " + prefetchReserve);
 		this.limit = limit;
+		this.prefetchReserve = prefetchReserve;
 	}
 
 	public void charge() {
@@ -40,6 +49,19 @@ public final class FrameBudget {
 			if (count == 0) throw new IllegalStateException("frame charge already zero");
 			return count - 1;
 		});
+	}
+
+	// Prefetch shares the total limit but cannot consume the frames sized for BNL pins.
+	public synchronized boolean tryChargePrefetch() {
+		if (prefetchCharged == prefetchReserve || !tryCharge()) return false;
+		prefetchCharged++;
+		return true;
+	}
+
+	public synchronized void releasePrefetch() {
+		if (prefetchCharged == 0) throw new IllegalStateException("prefetch charge already zero");
+		release();
+		prefetchCharged--;
 	}
 
 	public int charged() { return charged.get(); }

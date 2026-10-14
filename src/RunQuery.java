@@ -80,14 +80,18 @@ public class RunQuery {
             boolean useIndex,
             BufferManager bm,
             Path outputPath) throws IOException {
-        // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
-        int N = (frameBudget - 1) / 2;
+        // Decision (SAM-54): only one leaf scan advances at a time, but a paused scan
+        // (the outer during inner rescans) keeps its unconsumed window charged, so
+        // Movies, the WorkedOn temp file and People can each hold one.
+        int readAheadReserve = Math.max(0, Math.min(3 * Scan.READ_AHEAD_PAGES, frameBudget - 3));
+        // Peak pins are 2N + 1; leave room for all three prefetch windows.
+        int N = (frameBudget - 1 - readAheadReserve) / 2;
         if (N < 1) {
             throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
         QueryContext query = QueryContext.create(bm, outputPath);
-        var budgetScope = FrameBudget.install(new FrameBudget(frameBudget));
+        var budgetScope = FrameBudget.install(new FrameBudget(frameBudget, readAheadReserve));
         Throwable queryFailure = null;
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------

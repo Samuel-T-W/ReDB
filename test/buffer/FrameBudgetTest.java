@@ -14,6 +14,33 @@ class FrameBudgetTest {
 	@TempDir Path dir;
 
 	@Test
+	void twoPrefetchesLeaveThreePinsInFiveFrameBudget() {
+		FrameBudget budget = new FrameBudget(5, 2);
+		assertTrue(budget.tryChargePrefetch());
+		assertTrue(budget.tryChargePrefetch());
+		assertFalse(budget.tryChargePrefetch());
+		for (int i = 0; i < 3; i++) budget.charge();
+		assertEquals(5, budget.charged());
+		assertThrows(FrameBudgetExceededException.class, budget::charge);
+		budget.releasePrefetch();
+		budget.charge();
+		assertFalse(budget.tryChargePrefetch(), "total limit applies below the reserve too");
+		budget.releasePrefetch();
+		assertThrows(IllegalStateException.class, budget::releasePrefetch);
+		assertEquals(4, budget.charged(), "prefetch underflow must not release a pin charge");
+		for (int i = 0; i < 4; i++) budget.release();
+		assertEquals(0, budget.charged());
+		assertEquals(5, budget.peakCharged());
+	}
+
+	@Test
+	void defaultReserveIsZeroAndInvalidReservesAreRejected() {
+		assertFalse(new FrameBudget(3).tryChargePrefetch());
+		assertThrows(IllegalArgumentException.class, () -> new FrameBudget(3, -1));
+		assertThrows(IllegalArgumentException.class, () -> new FrameBudget(3, 4));
+	}
+
+	@Test
 	void twoPinsRejectThirdThenUnpinMakesRoom() throws Exception {
 		String file = dir.resolve("pages").toString();
 		Files.write(Path.of(file), new byte[RawPage.MAX_PAGE_LEN]);

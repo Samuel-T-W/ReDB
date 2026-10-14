@@ -46,7 +46,7 @@ class PrefetchTest {
 		bm.setPrefetchExecutor(Runnable::run);
 		bm.unpinPage(bm.pinPage(file, 0));
 		bm.resetIOCounts();
-		FrameBudget budget = new FrameBudget(1);
+		FrameBudget budget = new FrameBudget(1, 1);
 		try (var scope = FrameBudget.install(budget)) { bm.prefetch(file, 0); }
 		assertEquals(0, bm.getReadIOCount());
 		assertEquals(1, bm.getPrefetchAlreadyResident());
@@ -58,7 +58,7 @@ class PrefetchTest {
 		String file = pages();
 		BufferManager bm = new BufferManager(2);
 		bm.setPrefetchExecutor(Runnable::run);
-		FrameBudget budget = new FrameBudget(1);
+		FrameBudget budget = new FrameBudget(1, 1);
 		try (var scope = FrameBudget.install(budget)) {
 			bm.prefetch(file, 0);
 			assertEquals(1, budget.charged());
@@ -76,7 +76,7 @@ class PrefetchTest {
 		String file = pages();
 		BufferManager bm = new BufferManager(2);
 		bm.setPrefetchExecutor(Runnable::run);
-		FrameBudget budget = new FrameBudget(2);
+		FrameBudget budget = new FrameBudget(2, 2);
 		try (var scope = FrameBudget.install(budget); var worker = Executors.newSingleThreadExecutor()) {
 			bm.prefetch(file, 0);
 			assertEquals(1, budget.charged());
@@ -95,7 +95,7 @@ class PrefetchTest {
 		String file = pages();
 		BufferManager bm = new BufferManager(1);
 		bm.setPrefetchExecutor(Runnable::run);
-		FrameBudget budget = new FrameBudget(1);
+		FrameBudget budget = new FrameBudget(1, 1);
 		try (var scope = FrameBudget.install(budget)) { bm.prefetch(file, 0); }
 		bm.unpinPage(bm.pinPage(file, 1));
 		assertEquals(1, bm.getPrefetchEvictedUnused());
@@ -111,7 +111,7 @@ class PrefetchTest {
 		String file = pages();
 		BufferManager bm = new BufferManager(1);
 		bm.setPrefetchExecutor(Runnable::run);
-		FrameBudget budget = new FrameBudget(1);
+		FrameBudget budget = new FrameBudget(1, 1);
 		try (var scope = FrameBudget.install(budget)) {
 			assertDoesNotThrow(() -> bm.prefetch(file, 3));
 			assertDoesNotThrow(() -> bm.prefetch(dir.resolve("missing").toString(), 0));
@@ -146,7 +146,7 @@ class PrefetchTest {
 			}
 			@Override void afterPageTableRead() { pinStarted.countDown(); }
 		};
-		FrameBudget budget = new FrameBudget(2);
+		FrameBudget budget = new FrameBudget(2, 2);
 		try (var worker = Executors.newFixedThreadPool(2); var scope = FrameBudget.install(budget)) {
 			bm.setPrefetchExecutor(worker);
 			try {

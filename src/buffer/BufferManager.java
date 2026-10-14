@@ -170,7 +170,7 @@ public class BufferManager {
 	public void prefetch(String fileId, int pageId) {
 		prefetchIssued.increment();
 		FrameBudget budget = FrameBudget.current();
-		if (budget != null && !budget.tryCharge()) {
+		if (budget != null && !budget.tryChargePrefetch()) {
 			prefetchSkippedBudget.increment();
 			return;
 		}
@@ -186,7 +186,7 @@ public class BufferManager {
 		} catch (RuntimeException | Error e) {
 			prefetchFailed.increment();
 		}
-		if (budget != null) budget.release();
+		if (budget != null) budget.releasePrefetch();
 	}
 
 	private void loadPrefetch(PageKey key, FrameBudget budget) {
@@ -199,7 +199,7 @@ public class BufferManager {
 		} catch (IOException | RuntimeException | Error e) {
 			prefetchFailed.increment();
 		} finally {
-			if (!loaded && budget != null) budget.release();
+			if (!loaded && budget != null) budget.releasePrefetch();
 		}
 	}
 
@@ -916,7 +916,7 @@ public class BufferManager {
 	private void releasePrefetchCharge(Frame frame, boolean used) {
 		FrameBudget budget = frame.prefetchCharge.getAndSet(null);
 		if (budget == null) return;
-		if (budget != UNCHARGED_PREFETCH) budget.release();
+		if (budget != UNCHARGED_PREFETCH) budget.releasePrefetch();
 		if (used) prefetchUsed.increment();
 		else prefetchEvictedUnused.increment();
 	}

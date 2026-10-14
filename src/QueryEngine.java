@@ -17,8 +17,11 @@ import storage.RawPage;
  * {@code maxConcurrentQueries} queries at a time (excess callers block until a
  * permit frees up; they are queued, never rejected). A query's worst-case
  * simultaneous pins are 2N BNL block pages plus one transient scan/index pin,
- * i.e. 2 * ((budget - 1) / 2) + 1 &lt;= budget, and the pin that would take a
- * query to its peak is only requested while it holds at most budget - 1 frames.
+ * plus at most readAheadReserve prefetch charges, where
+ * readAheadReserve = max(0, min(3 * Scan.READ_AHEAD_PAGES, budget - 3)). Thus
+ * 2 * ((budget - 1 - readAheadReserve) / 2) + 1 + readAheadReserve &lt;= budget.
+ * The pin that would take a query to its peak is only requested while it holds
+ * at most budget - 1 charges.
  * So under admission control the pool always has a free or evictable frame for
  * whichever query asks next, even when budgets exactly cover the pool.
  */

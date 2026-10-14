@@ -4,16 +4,20 @@ import static org.junit.jupiter.api.Assertions.*;
 import static testutil.TestUtils.*;
 
 import buffer.BufferManager;
+import buffer.FrameBudget;
+import buffer.PageHandle;
 import catalog.TableEntry;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import storage.GenericRecord;
+import storage.GenericPage;
 import storage.RawPage;
 
 public class ScanTest {
@@ -42,6 +46,65 @@ public class ScanTest {
     @AfterEach
     void teardown() throws Exception {
         new File(filePath).delete();
+    }
+
+    @Test
+    void hundredPages_prefetchedOnceAndReturnedUnchanged() throws Exception {
+        scanHundredPages(Scan.READ_AHEAD_PAGES);
+    }
+
+    @Test
+    void fourFrameReserve_boundsOutstandingPrefetchAndStillReturnsEveryRecord() throws Exception {
+        scanHundredPages(4);
+    }
+
+    private void scanHundredPages(int reserve) throws Exception {
+        List<GenericRecord> expected = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            GenericRecord record = makeMovieRecord(SCHEMA, String.format("tt%07d", i),
+                    i == 0 ? "Alpha" : i == 1 ? "Beta" : "Title" + i);
+            expected.add(record);
+            PageHandle page = bm.createPinnedPage(filePath, null);
+            new GenericPage(page.page(), SCHEMA).insertRecord(record);
+            bm.markDirty(filePath, page.page().getPid());
+            bm.unpinPage(page);
+        }
+        bm.force();
+        bm.discardFile(filePath);
+        // Keep the exact-hit test free of evictions; exercise the small reserve in a tight pool.
+        bm = new BufferManager(reserve == Scan.READ_AHEAD_PAGES ? 100 : reserve + 1);
+        bm.register(new TableEntry(filePath, SCHEMA));
+        // Use the package-private test seam without expanding BufferManager's public API.
+        var setExecutor = BufferManager.class.getDeclaredMethod("setPrefetchExecutor", Executor.class);
+        setExecutor.setAccessible(true);
+        setExecutor.invoke(bm, (Executor) Runnable::run);
+        FrameBudget budget = new FrameBudget(reserve + 1, reserve);
+        Scan scan = new Scan(bm, filePath, SCHEMA);
+        try (var scope = FrameBudget.install(budget)) {
+            scan.open();
+            for (int i = 0; i < expected.size(); i++) {
+                GenericRecord actual = scan.next();
+                assertNotNull(actual);
+                assertArrayEquals(expected.get(i).getFieldBytes("movieId"), actual.getFieldBytes("movieId"));
+                assertArrayEquals(expected.get(i).getFieldBytes("title"), actual.getFieldBytes("title"));
+                if (i == 0) {
+                    assertEquals("Alpha", fromFixedBytes(actual.getFieldBytes("title")));
+                    assertEquals(reserve, budget.charged());
+                }
+                if (i == 1) assertEquals("Beta", fromFixedBytes(actual.getFieldBytes("title")));
+                assertTrue(budget.charged() <= reserve, "scan returned with an oversized prefetch window");
+            }
+            assertNull(scan.next());
+            scan.close();
+        }
+        assertEquals(99, bm.getPrefetchIssued());
+        if (reserve == Scan.READ_AHEAD_PAGES) {
+            assertEquals(100, bm.getReadIOCount());
+            assertEquals(99, bm.getPrefetchUsed());
+            assertEquals(99, bm.getLockFreeHitCount());
+        }
+        assertEquals(0, budget.charged());
+        assertTrue(budget.peakCharged() <= reserve + 1);
     }
 
     @Test
