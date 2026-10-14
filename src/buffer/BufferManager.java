@@ -13,6 +13,8 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
@@ -57,6 +59,17 @@ public class BufferManager {
 	// spinning, so this only has to be larger than any real pile-up. It exists
 	// so a livelock surfaces as a failure rather than a hang.
 	private static final int MAX_LOAD_ROUNDS = 1024;
+	// The OS already turns sequential 4 KB reads into 128 KB device reads, so
+	// a few threads keep the pipeline full. Scan chooses the pages-ahead window,
+	// independently of the thread count.
+	private static final int PREFETCH_THREADS = 4;
+	private volatile Executor prefetchExecutor;
+	private static class PrefetchExecutorHolder {
+		private static final Executor EXECUTOR = Executors.newFixedThreadPool(
+				PREFETCH_THREADS, Thread.ofPlatform().daemon().name("redb-prefetch-", 1).factory());
+	}
+
+	void setPrefetchExecutor(Executor e) { prefetchExecutor = e; }
 
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private final LongAdder readIOCount = new LongAdder();
@@ -153,7 +166,7 @@ public class BufferManager {
 		}
 	}
 
-	/** Issues a best-effort, synchronous load without taking a pin. */
+	/** Issues a best-effort background load without taking a pin. */
 	public void prefetch(String fileId, int pageId) {
 		prefetchIssued.increment();
 		FrameBudget budget = FrameBudget.current();
@@ -161,15 +174,29 @@ public class BufferManager {
 			prefetchSkippedBudget.increment();
 			return;
 		}
-		boolean loaded = false;
 		try {
 			PageKey key = new PageKey(fileId, pageId);
 			if (pageTable.containsKey(key)) prefetchAlreadyResident.increment();
-			else if (loadPage(key, false, budget) != null) {
+			else {
+				Executor executor = prefetchExecutor;
+				if (executor == null) executor = PrefetchExecutorHolder.EXECUTOR;
+				executor.execute(() -> loadPrefetch(key, budget));
+				return;
+			}
+		} catch (RuntimeException | Error e) {
+			prefetchFailed.increment();
+		}
+		if (budget != null) budget.release();
+	}
+
+	private void loadPrefetch(PageKey key, FrameBudget budget) {
+		boolean loaded = false;
+		try {
+			if (loadPage(key, false, budget) != null) {
 				loaded = true;
 				prefetchLoaded.increment();
 			}
-		} catch (IOException | RuntimeException e) {
+		} catch (IOException | RuntimeException | Error e) {
 			prefetchFailed.increment();
 		} finally {
 			if (!loaded && budget != null) budget.release();
@@ -221,7 +248,7 @@ public class BufferManager {
 						throw new IllegalStateException("Expected Free Frame object");
 					}
 					frame.pageKey = pageKey;
-				} catch (RuntimeException e) {
+				} catch (RuntimeException | Error e) {
 					releaseClaim(claimed, e);
 					throw e;
 				}
@@ -249,11 +276,11 @@ public class BufferManager {
 				}
 
 				Page page = null;
-				Exception loadError = null;
+				Throwable loadError = null;
 				globalLock.unlock();
 				try {
 					page = readPageFromDisk(pageKey);
-				} catch (IOException | RuntimeException e) {
+				} catch (IOException | RuntimeException | Error e) {
 					loadError = e;
 				} finally {
 					acquireGlobalLock();
@@ -264,7 +291,8 @@ public class BufferManager {
 					flushSettled.signalAll();
 					if (loadError instanceof IOException ioe)
 						throw ioe;
-					throw (RuntimeException) loadError;
+					if (loadError instanceof RuntimeException re) throw re;
+					throw (Error) loadError;
 				}
 				try {
 					Frame frame = bufferPool[claimed];
@@ -275,7 +303,7 @@ public class BufferManager {
 						releasePrefetchCharge(frame, true);
 					}
 					return frame;
-				} catch (RuntimeException e) {
+				} catch (RuntimeException | Error e) {
 					if (!pin) bufferPool[claimed].prefetchCharge.set(null);
 					pageTable.remove(pageKey, claimed);
 					releaseClaim(claimed, e);
