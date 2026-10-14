@@ -7,6 +7,8 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -122,6 +124,16 @@ public class BufferManager {
 
 	public CatalogEntry getCatalogEntry(String fileName) {
 		return catalog.get(fileName);
+	}
+
+	/**
+	 * Deletes a file this manager may have touched; deleting it directly leaves a
+	 * stale channel. The caller must be done with the file, as for {@link #discardFile}.
+	 */
+	public void deleteFile(String fileId) throws IOException {
+		discardFile(fileId);
+		unregister(fileId);
+		Files.deleteIfExists(Path.of(fileId));
 	}
 
 	/**
@@ -546,8 +558,8 @@ public class BufferManager {
 	 * eviction flush of one of this file's pages (any thread may evict an
 	 * unpinned dirty page): the discard waits for the file's in-flight
 	 * loads/flushes to drain and re-checks, so on return the pool holds no
-	 * frame, page-table entry, or in-flight I/O for the fileId. Call this
-	 * BEFORE deleting the file, or a draining flush could recreate it.
+	 * frame, page-table entry, or in-flight I/O for the fileId. Use
+	 * {@link #deleteFile} to delete the file after discarding its pages.
 	 */
 	public void discardFile(String fileId) {
 		while (true) {

@@ -72,6 +72,42 @@ class BufferManagerFileHandleTest {
 	}
 
 	@Test
+	void deleteFileAllowsSamePathToReturnNewBytes() throws Exception {
+		Path path = Files.write(directory.resolve("pages"), new byte[4096]);
+		file = path.toString();
+		PageHandle original = bm.pinPage(file, 0);
+		assertArrayEquals(new byte[4096], original.page().getByteArray());
+		bm.unpinPage(original);
+		bm.deleteFile(file);
+		assertFalse(Files.exists(path));
+
+		byte[] replacement = new byte[4096];
+		replacement[0] = 42;
+		replacement[4095] = 99;
+		Files.write(path, replacement);
+		PageHandle reopened = bm.pinPage(file, 0);
+		assertArrayEquals(replacement, reopened.page().getByteArray());
+		bm.unpinPage(reopened);
+		assertEquals(2, bm.getChannelOpenCount());
+		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
+	void deleteFileRejectsPinnedPageAndLeavesFileOnDisk() throws Exception {
+		Path path = Files.write(directory.resolve("pages"), new byte[4096]);
+		file = path.toString();
+		PageHandle pinned = bm.pinPage(file, 0);
+		try {
+			assertThrows(IllegalStateException.class, () -> bm.deleteFile(file));
+			assertTrue(Files.exists(path));
+			assertEquals(1, bm.getTotalPinCount());
+			assertEquals(List.of(), bm.checkInvariants());
+		} finally {
+			bm.unpinPage(pinned);
+		}
+	}
+
+	@Test
 	void readOnlyFileReturnsItsBytes() throws Exception {
 		byte[] bytes = new byte[8192];
 		Path path = Files.write(directory.resolve("readonly"), bytes);

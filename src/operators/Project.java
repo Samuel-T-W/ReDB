@@ -5,6 +5,7 @@ import buffer.PageHandle;
 import catalog.TableEntry;
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Map;
 import storage.GenericPage;
 import storage.GenericRecord;
@@ -91,7 +92,11 @@ public class Project implements Operator {
 
     /** Deletes the materialized temp file. Call once after the query finishes. */
     public void cleanup() {
-        new File(tempFileId).delete();
+        try {
+            bm.deleteFile(tempFileId);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Project cleanup failed", e);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -113,7 +118,7 @@ public class Project implements Operator {
         try {
             // Ensure temp file exists and is empty
             File f = new File(tempFileId);
-            f.delete();
+            bm.deleteFile(tempFileId);
             f.createNewFile();
 
             // Register temp file in catalog if not already registered
