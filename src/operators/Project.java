@@ -89,8 +89,11 @@ public class Project implements Operator {
         }
     }
 
-    /** Deletes the materialized temp file. Call once after the query finishes. */
+    /** Releases and deletes the materialized temp file. Call once after the query finishes. */
     public void cleanup() {
+        if (!materialize) return;
+        bm.discardFile(tempFileId);
+        bm.unregister(tempFileId);
         new File(tempFileId).delete();
     }
 
@@ -113,6 +116,8 @@ public class Project implements Operator {
         try {
             // Ensure temp file exists and is empty
             File f = new File(tempFileId);
+            bm.discardFile(tempFileId);
+            bm.unregister(tempFileId);
             f.delete();
             f.createNewFile();
 

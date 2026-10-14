@@ -7,6 +7,7 @@ import buffer.BufferManager;
 import catalog.TableEntry;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -229,6 +230,46 @@ public class ProjectTest {
 
         assertEquals(firstPass, secondPass);
         assertEquals(2, secondPass.size());
+    }
+
+    /** Reusing a cleaned-up temp path returns only the new projection's rows. */
+    @Test
+    void materializing_reusesTempPathAfterCleanup() throws Exception {
+        bm = new BufferManager(3);
+        bm.register(new TableEntry(workedonFile, WORKEDON_SCHEMA));
+        bm.register(new TableEntry(movieFile, WORKEDON_SCHEMA));
+        writePages(bm, workedonFile, WORKEDON_SCHEMA, Collections.nCopies(500,
+                makeWorkedonRecord("tt0000001", "nm0000001", "director")));
+        writePages(bm, movieFile, WORKEDON_SCHEMA, List.of(
+                makeWorkedonRecord("tt0000002", "nm0000002", "actor"),
+                makeWorkedonRecord("tt0000003", "nm0000003", "writer")));
+
+        Project first = new Project(new Scan(bm, workedonFile, WORKEDON_SCHEMA),
+                WORKEDON_PROJ_SCHEMA, bm, tmpFile);
+        first.open();
+        int count = 0;
+        GenericRecord r;
+        while ((r = first.next()) != null) {
+            assertEquals("tt0000001", fromFixedBytes(r.getFieldBytes("movieId")));
+            assertEquals("nm0000001", fromFixedBytes(r.getFieldBytes("personId")));
+            count++;
+        }
+        first.close();
+        assertEquals(500, count);
+        first.cleanup();
+
+        Project second = new Project(new Scan(bm, movieFile, WORKEDON_SCHEMA),
+                WORKEDON_PROJ_SCHEMA, bm, tmpFile);
+        second.open();
+        List<String> rows = new ArrayList<>();
+        while ((r = second.next()) != null) {
+            rows.add(fromFixedBytes(r.getFieldBytes("movieId")) + ":"
+                    + fromFixedBytes(r.getFieldBytes("personId")));
+        }
+        second.close();
+        second.cleanup();
+        assertEquals(List.of("tt0000002:nm0000002", "tt0000003:nm0000003"), rows);
+        assertEquals(0, bm.getTotalPinCount());
     }
 
     /**
