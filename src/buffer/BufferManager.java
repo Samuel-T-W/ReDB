@@ -134,6 +134,17 @@ public class BufferManager {
 	 * unpin remains for callers that have not switched.
 	 */
 	public PageHandle pinPage(String fileId, int pageId) throws IOException {
+		FrameBudget budget = FrameBudget.current();
+		if (budget != null) budget.charge();
+		try {
+			return pinPageUncharged(fileId, pageId);
+		} catch (IOException | RuntimeException | Error e) {
+			if (budget != null) budget.release();
+			throw e;
+		}
+	}
+
+	private PageHandle pinPageUncharged(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
 		PageHandle hit = tryPinHit(pageKey);
 		if (hit != null) {
@@ -253,7 +264,7 @@ public class BufferManager {
 	 * which is final.
 	 */
 	private PageHandle bindHandle(Frame frame, PageKey key) {
-		return new PageHandle(this, frame.frameIndex, frame.state.version(), key, frame.page);
+		return new PageHandle(this, frame.frameIndex, frame.state.version(), key, frame.page, FrameBudget.current());
 	}
 
 	private PageHandle tryPinHit(PageKey pageKey) {
@@ -276,7 +287,7 @@ public class BufferManager {
 		}
 		if (pageKey.equals(frame.pageKey)) {
 			lockFreeHitCount.increment();
-			return new PageHandle(this, frame.frameIndex, version, pageKey, frame.page);
+			return new PageHandle(this, frame.frameIndex, version, pageKey, frame.page, FrameBudget.current());
 		}
 		// The index was stale and this frame belongs to another page. Hand the
 		// pin straight back rather than serving its holder someone else's data.
@@ -364,6 +375,17 @@ public class BufferManager {
 	 * mutation, not a cache hit.
 	 */
 	public PageHandle createPinnedPage(String fileId, byte[] data) throws IOException {
+		FrameBudget budget = FrameBudget.current();
+		if (budget != null) budget.charge();
+		try {
+			return createPinnedPageUncharged(fileId, data);
+		} catch (IOException | RuntimeException | Error e) {
+			if (budget != null) budget.release();
+			throw e;
+		}
+	}
+
+	private PageHandle createPinnedPageUncharged(String fileId, byte[] data) throws IOException {
 		int nextPageId = getOrCreateFileState(fileId).allocatePageId();
 		PageKey pageKey = new PageKey(fileId, nextPageId);
 
@@ -439,6 +461,9 @@ public class BufferManager {
 				throw new IllegalStateException("unpin of a page this caller does not hold pinned: "
 						+ pageKey + " is " + FrameState.describe(frame.state.snapshot()));
 			}
+			// Key-based unpin must run on the pinning thread, in the same budget scope.
+			FrameBudget budget = FrameBudget.current();
+			if (budget != null) budget.release();
 		} finally {
 			globalLock.unlock();
 		}
@@ -464,6 +489,7 @@ public class BufferManager {
 			throw new IllegalStateException("handle already unpinned: " + handle);
 		}
 		releaseHandle(handle);
+		if (handle.budget() != null) handle.budget().release();
 		lockFreeUnpinCount.increment();
 	}
 

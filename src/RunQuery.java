@@ -1,4 +1,5 @@
 import buffer.BufferManager;
+import buffer.FrameBudget;
 import catalog.IndexEntry;
 import catalog.TableEntry;
 import java.io.BufferedWriter;
@@ -68,8 +69,8 @@ public class RunQuery {
      * registered here.
      *
      * @param frameBudget
-     *            Frames this query may use for its BNL blocks; it only drives the
-     *            block-size computation, not pool construction (the pool size is
+     *            Hard limit on this query's frame charges, also used for BNL
+     *            block-size computation (the shared pool size is
      *            whatever the injected manager was built with).
      */
     public static long run(
@@ -86,6 +87,7 @@ public class RunQuery {
         }
 
         QueryContext query = QueryContext.create(bm, outputPath);
+        var budgetScope = FrameBudget.install(new FrameBudget(frameBudget));
         Throwable queryFailure = null;
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------
@@ -207,6 +209,8 @@ public class RunQuery {
                 // is typically a symptom of it, e.g. a page the failed query
                 // left pinned).
                 queryFailure.addSuppressed(cleanupFailure);
+            } finally {
+                budgetScope.close();
             }
         }
     }
