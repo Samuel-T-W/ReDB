@@ -262,20 +262,42 @@ public class RunQuery {
         }
 
         void cleanup() {
-            // Drop this query's dead pages from the shared pool and its temp
-            // table from the catalog BEFORE deleting the files: discardFile
-            // waits out a concurrent eviction flush that could otherwise
-            // recreate a just-deleted temp file. It also asserts none of the
-            // query's pages are still pinned, so a pin leak fails loudly here.
-            for (String fileId : fileIds) {
-                bm.discardFile(fileId);
-                bm.unregister(fileId);
-            }
-            for (Path tempFile : tempFiles) {
-                try {
-                    Files.deleteIfExists(tempFile);
-                } catch (IOException ignored) {
-                    // Best-effort cleanup; query completion should not be masked by this.
+            // A cancelled query reaches cleanup with its interrupt flag set,
+            // and a deadline interrupt can also land mid-cleanup. discardFile
+            // parks on in-flight flushes and throws if interrupted, so run
+            // cleanup with the flag clear, retry a discard an interrupt cut
+            // short (it is idempotent), and restore the flag afterwards.
+            boolean interrupted = Thread.interrupted();
+            try {
+                // Drop this query's dead pages from the shared pool and its temp
+                // table from the catalog BEFORE deleting the files: discardFile
+                // waits out a concurrent eviction flush that could otherwise
+                // recreate a just-deleted temp file. It also asserts none of the
+                // query's pages are still pinned, so a pin leak fails loudly here.
+                for (String fileId : fileIds) {
+                    for (;;) {
+                        try {
+                            bm.discardFile(fileId);
+                            break;
+                        } catch (IllegalStateException e) {
+                            if (!Thread.interrupted()) {
+                                throw e;
+                            }
+                            interrupted = true;
+                        }
+                    }
+                    bm.unregister(fileId);
+                }
+                for (Path tempFile : tempFiles) {
+                    try {
+                        Files.deleteIfExists(tempFile);
+                    } catch (IOException ignored) {
+                        // Best-effort cleanup; query completion should not be masked by this.
+                    }
+                }
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
                 }
             }
         }

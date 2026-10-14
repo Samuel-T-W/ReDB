@@ -1,5 +1,7 @@
 package operators;
 
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import storage.GenericRecord;
 
 /**
@@ -23,4 +25,16 @@ public interface Operator {
     /** Releases any resources held by this operator. */
     void close();
 
+    /**
+     * Fails if this thread has been interrupted, which is how a query deadline
+     * cancels execution. Leaf operators call this before every page pin: cache
+     * hits never touch a channel, so a query whose working set is resident would
+     * otherwise never notice the interrupt. The interrupt flag is left set.
+     */
+    static void checkNotCancelled() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new UncheckedIOException(
+                    new InterruptedIOException("query cancelled by interrupt"));
+        }
+    }
 }

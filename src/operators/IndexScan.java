@@ -46,6 +46,7 @@ public class IndexScan implements Operator {
     public GenericRecord next() {
         if (rids == null || !rids.hasNext()) return null;
         RecordId rid = rids.next();
+        Operator.checkNotCancelled();
         try {
             PageHandle handle = bm.pinPage(tableFileId, rid.pageId());
             try {
