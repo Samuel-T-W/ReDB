@@ -43,6 +43,7 @@ public class Scan implements Operator {
         // iteration.
         while (currentPage < numPages) {
             int pageId = currentPage;
+            Operator.checkNotCancelled();
             try {
                 PageHandle handle = bm.pinPage(fileId, pageId);
                 try {
