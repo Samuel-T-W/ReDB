@@ -1,7 +1,12 @@
 import buffer.BufferManager;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Multi-query entry point over one shared {@link BufferManager}.
@@ -15,6 +20,11 @@ import java.util.concurrent.Semaphore;
  * query to its peak is only requested while it holds at most budget - 1 frames.
  * So under admission control the pool always has a free or evictable frame for
  * whichever query asks next, even when budgets exactly cover the pool.
+ *
+ * <p>An optional per-query timeout bounds admission wait plus execution. A
+ * query still queued at its deadline fails without running; a running query is
+ * cancelled by interrupting its thread, which makes its next page pin (or
+ * in-flight channel I/O) fail. Both surface as {@link QueryTimeoutException}.
  */
 public class QueryEngine {
 
@@ -25,11 +35,33 @@ public class QueryEngine {
             long executionNanos) {
     }
 
+    // One daemon thread fires every engine's deadlines; firing is just an interrupt.
+    private static final ScheduledExecutorService DEADLINES =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "redb-query-deadlines");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final BufferManager bm;
     private final int frameBudget;
     private final Semaphore admission;
+    private final Duration queryTimeout; // null: no limit
 
+    /** An engine whose queries have no time limit. */
     public QueryEngine(int bufferSize, int maxConcurrentQueries) {
+        this(bufferSize, maxConcurrentQueries, null);
+    }
+
+    /**
+     * @param queryTimeout
+     *            Limit on each query's admission wait plus execution, or null for
+     *            no limit.
+     */
+    public QueryEngine(int bufferSize, int maxConcurrentQueries, Duration queryTimeout) {
+        if (queryTimeout != null && (queryTimeout.isNegative() || queryTimeout.isZero())) {
+            throw new IllegalArgumentException("queryTimeout must be positive, got: " + queryTimeout);
+        }
         if (maxConcurrentQueries < 1) {
             throw new IllegalArgumentException(
                     "maxConcurrentQueries must be positive, got: " + maxConcurrentQueries);
@@ -44,6 +76,7 @@ public class QueryEngine {
         this.bm = new BufferManager(bufferSize);
         this.frameBudget = budget;
         this.admission = new Semaphore(maxConcurrentQueries);
+        this.queryTimeout = queryTimeout;
         RunQuery.registerCatalog(bm);
     }
 
@@ -62,6 +95,9 @@ public class QueryEngine {
      * Runs one query and separates time waiting for admission from time spent
      * executing after admission. Failed queries are rethrown and have no
      * successful outcome.
+     *
+     * @throws QueryTimeoutException
+     *             if the engine has a timeout and the query exceeds it.
      */
     public QueryOutcome runMeasuredQuery(
             String startRange,
@@ -69,11 +105,17 @@ public class QueryEngine {
             boolean useIndex,
             Path outputPath) throws IOException, InterruptedException {
         long admissionStartNanos = System.nanoTime();
-        admission.acquire();
+        if (queryTimeout == null) {
+            admission.acquire();
+        } else if (!admission.tryAcquire(queryTimeout.toNanos(), TimeUnit.NANOSECONDS)) {
+            throw new QueryTimeoutException(queryTimeout, false, null);
+        }
         long executionStartNanos = System.nanoTime();
         try {
-            long resultCount =
-                    RunQuery.run(startRange, endRange, frameBudget, useIndex, bm, outputPath);
+            long resultCount = queryTimeout == null
+                    ? RunQuery.run(startRange, endRange, frameBudget, useIndex, bm, outputPath)
+                    : runWithDeadline(startRange, endRange, useIndex, outputPath,
+                            queryTimeout.toNanos() - (executionStartNanos - admissionStartNanos));
             long completedNanos = System.nanoTime();
             return new QueryOutcome(
                     resultCount,
@@ -84,9 +126,75 @@ public class QueryEngine {
         }
     }
 
+    /**
+     * Runs the query on the calling thread with a deadline that interrupts this
+     * thread once {@code remainingNanos} elapse. RunQuery's cleanup runs with the
+     * interrupt cleared, so a cancelled query still releases everything.
+     */
+    private long runWithDeadline(
+            String startRange,
+            String endRange,
+            boolean useIndex,
+            Path outputPath,
+            long remainingNanos) throws IOException {
+        if (remainingNanos <= 0) {
+            throw new QueryTimeoutException(queryTimeout, true, null);
+        }
+        Deadline deadline = new Deadline(Thread.currentThread());
+        ScheduledFuture<?> timer =
+                DEADLINES.schedule(deadline::fire, remainingNanos, TimeUnit.NANOSECONDS);
+        try {
+            return RunQuery.run(startRange, endRange, frameBudget, useIndex, bm, outputPath);
+        } catch (IOException | RuntimeException e) {
+            if (deadline.disarm()) {
+                throw new QueryTimeoutException(queryTimeout, true, e);
+            }
+            throw e;
+        } finally {
+            timer.cancel(false);
+            // A deadline that fired after the query finished must not leak its
+            // interrupt into the caller's thread.
+            if (deadline.disarm()) {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    /**
+     * Interrupts the worker unless the query has already finished. Disarming and
+     * firing share one lock, so no interrupt can land after {@link #disarm}.
+     */
+    private static final class Deadline {
+        private final Thread worker;
+        private boolean armed = true;
+        private boolean fired;
+
+        Deadline(Thread worker) {
+            this.worker = worker;
+        }
+
+        synchronized void fire() {
+            if (armed) {
+                fired = true;
+                worker.interrupt();
+            }
+        }
+
+        /** Stops future firing; returns whether the deadline already fired. */
+        synchronized boolean disarm() {
+            armed = false;
+            return fired;
+        }
+    }
+
     // For testing only
     int getFrameBudget() {
         return frameBudget;
+    }
+
+    // For testing only
+    Semaphore getAdmission() {
+        return admission;
     }
 
     // For testing only
