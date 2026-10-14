@@ -231,6 +231,36 @@ public class ProjectTest {
         assertEquals(2, secondPass.size());
     }
 
+    @Test
+    void materializing_reusesTempPathWithDifferentChildData() throws Exception {
+        bm.register(new TableEntry(workedonFile, MOVIES_SCHEMA));
+        writePages(bm, movieFile, MOVIES_SCHEMA,
+                List.of(makeMovieRecord(MOVIES_SCHEMA, "tt0000001", "Alpha")));
+        writePages(bm, workedonFile, MOVIES_SCHEMA, List.of(
+                makeMovieRecord(MOVIES_SCHEMA, "tt0000002", "Beta"),
+                makeMovieRecord(MOVIES_SCHEMA, "tt0000003", "Gamma")));
+
+        Project first = new Project(new Scan(bm, movieFile, MOVIES_SCHEMA),
+                TITLE_ONLY_SCHEMA, bm, tmpFile);
+        first.open();
+        assertEquals("Alpha", fromFixedBytes(first.next().getFieldBytes("title")));
+        assertNull(first.next());
+        first.close();
+
+        Project second = new Project(new Scan(bm, workedonFile, MOVIES_SCHEMA),
+                TITLE_ONLY_SCHEMA, bm, tmpFile);
+        second.open();
+        List<String> titles = new ArrayList<>();
+        GenericRecord rec;
+        while ((rec = second.next()) != null) {
+            titles.add(fromFixedBytes(rec.getFieldBytes("title")));
+        }
+        second.close();
+
+        assertEquals(List.of("Beta", "Gamma"), titles);
+        assertEquals(0, bm.getTotalPinCount());
+    }
+
     /**
      * After cleanup() is called, the temp file must no longer exist on disk.
      */
@@ -254,5 +284,6 @@ public class ProjectTest {
         proj.cleanup();
 
         assertFalse(new File(tmpFile).exists(), "temp file should be deleted after cleanup");
+        assertNull(bm.getCatalogEntry(tmpFile));
     }
 }
