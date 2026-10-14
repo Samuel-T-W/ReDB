@@ -10,6 +10,10 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -132,6 +136,65 @@ class BufferManagerFileHandleTest {
 		Files.write(Path.of(file), new byte[4096]);
 		assertArrayEquals(new byte[4096], bm.getPage(file, 0).getByteArray());
 		assertEquals(List.of(), bm.checkInvariants());
+	}
+
+	@Test
+	void bystanderSurvivesManyConcurrentInterrupts() throws Exception {
+		byte[] bytes = new byte[256 * 4096];
+		Arrays.fill(bytes, (byte) 42);
+		String sharedFile = Files.write(directory.resolve("shared-pages"), bytes).toString();
+		BufferManager shared = new BufferManager(32);
+		AtomicBoolean stop = new AtomicBoolean();
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		AtomicInteger bystanderReads = new AtomicInteger();
+		Thread[] readers = new Thread[9];
+		for (int i = 0; i < readers.length; i++) {
+			int reader = i;
+			readers[i] = new Thread(() -> {
+				int page = reader * 29;
+				while (!stop.get()) {
+					try {
+						PageHandle handle = shared.pinPage(sharedFile, page++ % 256);
+						try {
+							assertEquals(42, handle.page().getByteArray()[0]);
+							assertEquals(42, handle.page().getByteArray()[4095]);
+						} finally {
+							shared.unpinPage(handle);
+						}
+						if (reader == 0) bystanderReads.incrementAndGet();
+					} catch (Throwable e) {
+						if (reader == 0 || !(e instanceof Exception)) {
+							failure.compareAndSet(null, e);
+							return;
+						}
+					} finally {
+						Thread.interrupted();
+					}
+				}
+			}, reader == 0 ? "bystander" : "victim-" + reader);
+			readers[i].setDaemon(true);
+		}
+		try {
+			for (Thread reader : readers) reader.start();
+			long deadline = System.nanoTime() + 1_500_000_000L;
+			while (System.nanoTime() < deadline && failure.get() == null) {
+				for (int i = 1; i < readers.length; i++) readers[i].interrupt();
+				LockSupport.parkNanos(50_000);
+			}
+		} finally {
+			stop.set(true);
+			long deadline = System.nanoTime() + 1_000_000_000L;
+			for (Thread reader : readers) {
+				reader.join(Math.max(1, (deadline - System.nanoTime()) / 1_000_000));
+			}
+			shared.unregister(sharedFile);
+		}
+		for (Thread reader : readers) assertFalse(reader.isAlive(), reader.getName() + " did not stop");
+		assertNull(failure.get(), () -> "reader failed: " + failure.get());
+		assertTrue(bystanderReads.get() >= 256, "bystander must complete repeated scans");
+		assertTrue(shared.getReadIOCount() > 256, "reads must keep missing the pool");
+		assertEquals(List.of(), shared.checkInvariants());
+		assertEquals(0, shared.getTotalPinCount());
 	}
 
 	@Test

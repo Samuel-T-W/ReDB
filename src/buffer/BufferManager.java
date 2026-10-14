@@ -690,7 +690,7 @@ public class BufferManager {
 	}
 
 	private void transferPage(String fileId, ByteBuffer buffer, long offset, boolean write) throws IOException {
-		for (int attempt = 0; ; attempt++) {
+		while (true) {
 			FileHandle handle = fileHandles.computeIfAbsent(fileId, key -> new FileHandle());
 			var channel = handle.channel(fileId, write, channelOpenCount);
 			// unregister may have removed this handle while its channel was opening.
@@ -706,7 +706,9 @@ public class BufferManager {
 			} catch (ClosedByInterruptException e) {
 				throw e;
 			} catch (ClosedChannelException e) {
-				if (Thread.currentThread().isInterrupted() || attempt >= 2) throw e;
+				if (Thread.currentThread().isInterrupted()) throw e;
+				// Closes are finite: interrupted I/O, unregister/deleteFile, or CAS losers
+				// closing their own never-installed channels; retry until they settle.
 			}
 		}
 	}

@@ -3,7 +3,6 @@ package buffer;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Path;
@@ -17,7 +16,7 @@ final class FileHandle {
 	private final AtomicReference<FileChannel> channel = new AtomicReference<>();
 
 	FileChannel channel(String fileId, boolean write, LongAdder opens) throws IOException {
-		for (int attempt = 0; attempt < 3; attempt++) {
+		while (true) {
 			FileChannel current = channel.get();
 			if (current != null && current.isOpen()) return current;
 			if (Thread.currentThread().isInterrupted()) throw new ClosedByInterruptException();
@@ -39,7 +38,6 @@ final class FileHandle {
 			if (channel.compareAndSet(current, opened)) return opened;
 			opened.close();
 		}
-		throw new ClosedChannelException();
 	}
 
 	void close() throws IOException {
