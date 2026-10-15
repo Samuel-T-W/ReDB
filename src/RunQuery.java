@@ -1,4 +1,5 @@
 import buffer.BufferManager;
+import buffer.FrameBudget;
 import catalog.IndexEntry;
 import catalog.TableEntry;
 import java.io.BufferedWriter;
@@ -51,6 +52,10 @@ public class RunQuery {
 
     static final int BTREE_DEGREE = BTreeManager.maxDegree(TITLE_LEN);
 
+    static int readAheadReserve(int budget, boolean useIndex) {
+        return Math.max(0, Math.min((useIndex ? 2 : 3) * Scan.READ_AHEAD_PAGES, (budget - 3) / 4));
+    }
+
     public static long run(
             String startRange,
             String endRange,
@@ -68,8 +73,8 @@ public class RunQuery {
      * registered here.
      *
      * @param frameBudget
-     *            Frames this query may use for its BNL blocks; it only drives the
-     *            block-size computation, not pool construction (the pool size is
+     *            Hard limit on this query's frame charges, also used for BNL
+     *            block-size computation (the shared pool size is
      *            whatever the injected manager was built with).
      */
     public static long run(
@@ -79,13 +84,21 @@ public class RunQuery {
             boolean useIndex,
             BufferManager bm,
             Path outputPath) throws IOException {
-        // N = (B - C) / 2  where C = 1 (one frame for inner scan at any time)
-        int N = (frameBudget - 1) / 2;
+        // Decision (SAM-54): only one leaf scan advances at a time, but a paused scan
+        // (the outer during inner rescans) keeps its unconsumed window charged, so
+        // Movies, the WorkedOn temp file and People can each hold one; IndexScan
+        // does not prefetch, so the index path needs only two windows.
+        // Cap read-ahead at a quarter of spare frames to preserve small BNL blocks.
+        int readAheadReserve = readAheadReserve(frameBudget, useIndex);
+        // Peak pins are 2N + 1; leave room for the bounded prefetch reserve.
+        int N = (frameBudget - 1 - readAheadReserve) / 2;
         if (N < 1) {
             throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
         QueryContext query = QueryContext.create(bm, outputPath);
+        FrameBudget budget = new FrameBudget(frameBudget, readAheadReserve);
+        var budgetScope = FrameBudget.install(budget);
         Throwable queryFailure = null;
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------
@@ -198,7 +211,13 @@ public class RunQuery {
             // registered, so plan-construction failures cannot leak state into
             // a caller-provided, long-lived BufferManager.
             try {
-                query.cleanup();
+                // Drain queued loads before discarding their temp files; clean
+                // up even if draining times out.
+                try {
+                    budget.close();
+                } finally {
+                    query.cleanup();
+                }
             } catch (RuntimeException cleanupFailure) {
                 if (queryFailure == null) {
                     throw cleanupFailure;
@@ -207,6 +226,8 @@ public class RunQuery {
                 // is typically a symptom of it, e.g. a page the failed query
                 // left pinned).
                 queryFailure.addSuppressed(cleanupFailure);
+            } finally {
+                budgetScope.close();
             }
         }
     }

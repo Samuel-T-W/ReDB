@@ -2,21 +2,40 @@ import buffer.BufferManager;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.concurrent.Semaphore;
+import storage.RawPage;
 
 /**
  * Multi-query entry point over one shared {@link BufferManager}.
+ *
+ * <p>The one-argument constructor derives its admission limit from the pool
+ * size and the 32 MiB per-query budget floor, admitting at least one query.
+ * The two-argument constructor explicitly overrides that limit for tests and
+ * benchmarks with tiny pools, retaining its 3-frame minimum per query.
  *
  * <p>Each admitted query runs with a fixed frame budget of
  * {@code bufferSize / maxConcurrentQueries}, and a semaphore admits at most
  * {@code maxConcurrentQueries} queries at a time (excess callers block until a
  * permit frees up; they are queued, never rejected). A query's worst-case
  * simultaneous pins are 2N BNL block pages plus one transient scan/index pin,
- * i.e. 2 * ((budget - 1) / 2) + 1 &lt;= budget, and the pin that would take a
- * query to its peak is only requested while it holds at most budget - 1 frames.
+ * plus at most readAheadReserve prefetch charges, where
+ * readAheadReserve = min(windows * Scan.READ_AHEAD_PAGES, (budget - 3) / 4),
+ * with three windows for scans or two for the index path. Thus
+ * 2 * ((budget - 1 - readAheadReserve) / 2) + 1 + readAheadReserve &lt;= budget.
+ * The pin that would take a query to its peak is only requested while it holds
+ * at most budget - 1 charges.
  * So under admission control the pool always has a free or evictable frame for
  * whichever query asks next, even when budgets exactly cover the pool.
  */
 public class QueryEngine {
+
+    // The 32 MiB floor sits between PostgreSQL's per-operator work_mem
+    // (4 MB default, about 64 MB common) and DuckDB's per-thread guidance
+    // (125 MB minimum, 1-4 GB recommended). Below it, BNL inner rescans
+    // (ceil(P_outer / N) passes over the inner) dominate run time.
+    // SAM-57 owns picking the operating point below the admission ceiling.
+    public static final long MIN_QUERY_BUDGET_BYTES = 32L * 1024 * 1024;
+    public static final int MIN_QUERY_BUDGET_FRAMES =
+            (int) (MIN_QUERY_BUDGET_BYTES / RawPage.MAX_PAGE_LEN);
 
     /** Timings for one successfully completed query. */
     public record QueryOutcome(
@@ -28,6 +47,18 @@ public class QueryEngine {
     private final BufferManager bm;
     private final int frameBudget;
     private final Semaphore admission;
+
+    /** Returns the pool-derived admission ceiling, with at least one permit. */
+    public static int admissionCeiling(int bufferSize) {
+        if (bufferSize <= 0) {
+            throw new IllegalArgumentException("bufferSize must be positive, got: " + bufferSize);
+        }
+        return Math.max(1, bufferSize / MIN_QUERY_BUDGET_FRAMES);
+    }
+
+    public QueryEngine(int bufferSize) {
+        this(bufferSize, admissionCeiling(bufferSize));
+    }
 
     public QueryEngine(int bufferSize, int maxConcurrentQueries) {
         if (maxConcurrentQueries < 1) {

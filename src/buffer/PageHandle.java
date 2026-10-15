@@ -23,9 +23,14 @@ public final class PageHandle {
 	private final long version;
 	private final PageKey key;
 	private final Page page;
+	private final FrameBudget budget;
 	private final AtomicBoolean released = new AtomicBoolean(false);
 
 	PageHandle(BufferManager owner, int frameIndex, long version, PageKey key, Page page) {
+		this(owner, frameIndex, version, key, page, null);
+	}
+
+	PageHandle(BufferManager owner, int frameIndex, long version, PageKey key, Page page, FrameBudget budget) {
 		if (frameIndex < 0) {
 			throw new IllegalArgumentException("frameIndex must be non-negative");
 		}
@@ -40,8 +45,10 @@ public final class PageHandle {
 		this.version = version;
 		this.key = key;
 		this.page = page;
+		this.budget = budget;
 	}
 
+	FrameBudget budget() { return budget; } // charged at pin; null outside a query
 	public Page page() {
 		return page;
 	}

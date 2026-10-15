@@ -1,6 +1,7 @@
 package buffer;
 
 import storage.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Frame {
 	// Pin count and page validity live in this packed atomic word, not in plain
@@ -14,6 +15,7 @@ public class Frame {
 	// could see a stale false and drop the page's newest bytes.
 	public volatile boolean isDirty;
 	public PageKey pageKey;
+	final AtomicReference<FrameBudget> prefetchCharge = new AtomicReference<>();
 
 	public int frameIndex; // value persisted through clear's as it's attached to the index in buffer pool
 

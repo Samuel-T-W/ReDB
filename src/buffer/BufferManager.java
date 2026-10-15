@@ -13,6 +13,8 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
@@ -57,10 +59,30 @@ public class BufferManager {
 	// spinning, so this only has to be larger than any real pile-up. It exists
 	// so a livelock surfaces as a failure rather than a hang.
 	private static final int MAX_LOAD_ROUNDS = 1024;
+	// The OS already turns sequential 4 KB reads into 128 KB device reads, so
+	// a few threads keep the pipeline full. Scan chooses the pages-ahead window,
+	// independently of the thread count.
+	private static final int PREFETCH_THREADS = 4;
+	private volatile Executor prefetchExecutor;
+	private static class PrefetchExecutorHolder {
+		private static final Executor EXECUTOR = Executors.newFixedThreadPool(
+				PREFETCH_THREADS, Thread.ofPlatform().daemon().name("redb-prefetch-", 1).factory());
+	}
+
+	void setPrefetchExecutor(Executor e) { prefetchExecutor = e; }
 
 	// I/O counters: read = disk loads (cache misses), write = pages written to disk
 	private final LongAdder readIOCount = new LongAdder();
 	private final LongAdder writeIOCount = new LongAdder();
+	private final LongAdder prefetchIssued = new LongAdder();
+	private final LongAdder prefetchAlreadyResident = new LongAdder();
+	private final LongAdder prefetchSkippedBudget = new LongAdder();
+	private final LongAdder prefetchLoaded = new LongAdder();
+	private final LongAdder prefetchUsed = new LongAdder();
+	private final LongAdder prefetchEvictedUnused = new LongAdder();
+	private final LongAdder prefetchFailed = new LongAdder();
+	// Marks an unbudgeted prefetch so its use and eviction are still counted.
+	private static final FrameBudget UNCHARGED_PREFETCH = new FrameBudget(0);
 	// getPage calls served without ever acquiring globalLock. Counts a code
 	// path taken, not time saved: it is exact and reproducible, where a latency
 	// figure from a hand-rolled harness on this workload would be neither.
@@ -134,11 +156,81 @@ public class BufferManager {
 	 * unpin remains for callers that have not switched.
 	 */
 	public PageHandle pinPage(String fileId, int pageId) throws IOException {
+		FrameBudget budget = FrameBudget.current();
+		if (budget != null) budget.charge();
+		try {
+			return pinPageUncharged(fileId, pageId);
+		} catch (IOException | RuntimeException | Error e) {
+			if (budget != null) budget.release();
+			throw e;
+		}
+	}
+
+	/** Issues a best-effort background load without taking a pin. */
+	public void prefetch(String fileId, int pageId) {
+		prefetchIssued.increment();
+		FrameBudget budget = FrameBudget.current();
+		if (budget != null && !budget.tryChargePrefetch()) {
+			prefetchSkippedBudget.increment();
+			return;
+		}
+		boolean taskRegistered = false;
+		try {
+			PageKey key = new PageKey(fileId, pageId);
+			if (pageTable.containsKey(key)) prefetchAlreadyResident.increment();
+			else {
+				Executor executor = prefetchExecutor;
+				if (executor == null) executor = PrefetchExecutorHolder.EXECUTOR;
+				if (budget != null && !budget.beginPrefetch()) {
+					prefetchSkippedBudget.increment();
+				} else {
+					taskRegistered = budget != null;
+					executor.execute(() -> loadPrefetch(key, budget));
+					return;
+				}
+			}
+		} catch (RuntimeException | Error e) {
+			prefetchFailed.increment();
+		}
+		try {
+			if (budget != null) budget.releasePrefetch();
+		} finally {
+			if (taskRegistered) budget.finishPrefetch();
+		}
+	}
+
+	private void loadPrefetch(PageKey key, FrameBudget budget) {
+		boolean loaded = false;
+		try {
+			if (budget != null && budget.isClosed()) {
+				prefetchSkippedBudget.increment();
+				return;
+			}
+			if (loadPage(key, false, budget) != null) {
+				loaded = true;
+				prefetchLoaded.increment();
+			}
+		} catch (IOException | RuntimeException | Error e) {
+			prefetchFailed.increment();
+		} finally {
+			try {
+				if (!loaded && budget != null) budget.releasePrefetch();
+			} finally {
+				if (budget != null) budget.finishPrefetch();
+			}
+		}
+	}
+
+	private PageHandle pinPageUncharged(String fileId, int pageId) throws IOException {
 		PageKey pageKey = new PageKey(fileId, pageId);
 		PageHandle hit = tryPinHit(pageKey);
 		if (hit != null) {
 			return hit;
 		}
+		return bindHandle(loadPage(pageKey, true, null), pageKey);
+	}
+
+	private Frame loadPage(PageKey pageKey, boolean pin, FrameBudget budget) throws IOException {
 		acquireGlobalLock();
 		try {
 			int rounds = 0;
@@ -146,9 +238,14 @@ public class BufferManager {
 				Integer frameIndex = pageTable.get(pageKey);
 				if (frameIndex != null) {
 					Frame frame = bufferPool[frameIndex];
+					if (!pin) {
+						prefetchAlreadyResident.increment();
+						return null;
+					}
 					if (frame.hasPage()) {
 						frame.pin();
-						return bindHandle(frame, pageKey);
+						releasePrefetchCharge(frame, true);
+						return frame;
 					}
 					awaitFlushSettled();
 					continue;
@@ -169,7 +266,7 @@ public class BufferManager {
 						throw new IllegalStateException("Expected Free Frame object");
 					}
 					frame.pageKey = pageKey;
-				} catch (RuntimeException e) {
+				} catch (RuntimeException | Error e) {
 					releaseClaim(claimed, e);
 					throw e;
 				}
@@ -189,15 +286,19 @@ public class BufferManager {
 					// timeout. The loop head pins a VALID winner and waits
 					// only when that mapping is still unsettled.
 					releaseClaim(claimed, null);
+					if (!pin) {
+						prefetchAlreadyResident.increment();
+						return null;
+					}
 					continue;
 				}
 
 				Page page = null;
-				Exception loadError = null;
+				Throwable loadError = null;
 				globalLock.unlock();
 				try {
 					page = readPageFromDisk(pageKey);
-				} catch (IOException | RuntimeException e) {
+				} catch (IOException | RuntimeException | Error e) {
 					loadError = e;
 				} finally {
 					acquireGlobalLock();
@@ -208,14 +309,20 @@ public class BufferManager {
 					flushSettled.signalAll();
 					if (loadError instanceof IOException ioe)
 						throw ioe;
-					throw (RuntimeException) loadError;
+					if (loadError instanceof RuntimeException re) throw re;
+					throw (Error) loadError;
 				}
 				try {
 					Frame frame = bufferPool[claimed];
+					if (!pin) frame.prefetchCharge.set(budget == null ? UNCHARGED_PREFETCH : budget);
 					publishValid(frame, pageKey, page);
-					frame.pin();
-					return bindHandle(frame, pageKey);
-				} catch (RuntimeException e) {
+					if (pin) {
+						frame.pin();
+						releasePrefetchCharge(frame, true);
+					}
+					return frame;
+				} catch (RuntimeException | Error e) {
+					if (!pin) bufferPool[claimed].prefetchCharge.set(null);
 					pageTable.remove(pageKey, claimed);
 					releaseClaim(claimed, e);
 					throw e;
@@ -253,7 +360,7 @@ public class BufferManager {
 	 * which is final.
 	 */
 	private PageHandle bindHandle(Frame frame, PageKey key) {
-		return new PageHandle(this, frame.frameIndex, frame.state.version(), key, frame.page);
+		return new PageHandle(this, frame.frameIndex, frame.state.version(), key, frame.page, FrameBudget.current());
 	}
 
 	private PageHandle tryPinHit(PageKey pageKey) {
@@ -275,8 +382,9 @@ public class BufferManager {
 			return null;
 		}
 		if (pageKey.equals(frame.pageKey)) {
+			if (frame.prefetchCharge.get() != null) releasePrefetchCharge(frame, true);
 			lockFreeHitCount.increment();
-			return new PageHandle(this, frame.frameIndex, version, pageKey, frame.page);
+			return new PageHandle(this, frame.frameIndex, version, pageKey, frame.page, FrameBudget.current());
 		}
 		// The index was stale and this frame belongs to another page. Hand the
 		// pin straight back rather than serving its holder someone else's data.
@@ -364,6 +472,17 @@ public class BufferManager {
 	 * mutation, not a cache hit.
 	 */
 	public PageHandle createPinnedPage(String fileId, byte[] data) throws IOException {
+		FrameBudget budget = FrameBudget.current();
+		if (budget != null) budget.charge();
+		try {
+			return createPinnedPageUncharged(fileId, data);
+		} catch (IOException | RuntimeException | Error e) {
+			if (budget != null) budget.release();
+			throw e;
+		}
+	}
+
+	private PageHandle createPinnedPageUncharged(String fileId, byte[] data) throws IOException {
 		int nextPageId = getOrCreateFileState(fileId).allocatePageId();
 		PageKey pageKey = new PageKey(fileId, nextPageId);
 
@@ -439,6 +558,9 @@ public class BufferManager {
 				throw new IllegalStateException("unpin of a page this caller does not hold pinned: "
 						+ pageKey + " is " + FrameState.describe(frame.state.snapshot()));
 			}
+			// Key-based unpin must run on the pinning thread, in the same budget scope.
+			FrameBudget budget = FrameBudget.current();
+			if (budget != null) budget.release();
 		} finally {
 			globalLock.unlock();
 		}
@@ -464,6 +586,7 @@ public class BufferManager {
 			throw new IllegalStateException("handle already unpinned: " + handle);
 		}
 		releaseHandle(handle);
+		if (handle.budget() != null) handle.budget().release();
 		lockFreeUnpinCount.increment();
 	}
 
@@ -568,6 +691,7 @@ public class BufferManager {
 						continue;
 					}
 					iter.remove();
+					releasePrefetchCharge(frame, false);
 					frame.clearOwned();
 				}
 				if (inFlight) {
@@ -642,6 +766,7 @@ public class BufferManager {
 				// conditional: only unmap the entry still pointing at this frame, never a
 				// mapping a later loader installed for the same key on another frame
 				pageTable.remove(victimKey, frameIndex);
+				releasePrefetchCharge(evictFrame, false);
 				evictFrame.clearOwned();
 				return frameIndex;
 			} finally {
@@ -654,6 +779,7 @@ public class BufferManager {
 		// evict frame content and hand the frame to the caller
 		int frameIndex = evictFrame.frameIndex;
 		pageTable.remove(victimKey, frameIndex);
+		releasePrefetchCharge(evictFrame, false);
 		evictFrame.clearOwned();
 		flushSettled.signalAll();
 		return frameIndex;
@@ -805,9 +931,24 @@ public class BufferManager {
 		}
 	}
 
+	private void releasePrefetchCharge(Frame frame, boolean used) {
+		FrameBudget budget = frame.prefetchCharge.getAndSet(null);
+		if (budget == null) return;
+		if (budget != UNCHARGED_PREFETCH) budget.releasePrefetch();
+		if (used) prefetchUsed.increment();
+		else prefetchEvictedUnused.increment();
+	}
+
 	public void resetIOCounts() {
 		readIOCount.reset();
 		writeIOCount.reset();
+		prefetchIssued.reset();
+		prefetchAlreadyResident.reset();
+		prefetchSkippedBudget.reset();
+		prefetchLoaded.reset();
+		prefetchUsed.reset();
+		prefetchEvictedUnused.reset();
+		prefetchFailed.reset();
 		lockFreeHitCount.reset();
 		lockFreeUnpinCount.reset();
 		globalLockAcquisitions.reset();
@@ -829,6 +970,13 @@ public class BufferManager {
 		}
 		globalLockAcquisitions.increment();
 	}
+	public long getPrefetchIssued() { return prefetchIssued.sum(); }
+	public long getPrefetchAlreadyResident() { return prefetchAlreadyResident.sum(); }
+	public long getPrefetchSkippedBudget() { return prefetchSkippedBudget.sum(); }
+	public long getPrefetchLoaded() { return prefetchLoaded.sum(); }
+	public long getPrefetchUsed() { return prefetchUsed.sum(); }
+	public long getPrefetchEvictedUnused() { return prefetchEvictedUnused.sum(); }
+	public long getPrefetchFailed() { return prefetchFailed.sum(); }
 	public long getReadIOCount()  { return readIOCount.sum();  }
 	public long getWriteIOCount() { return writeIOCount.sum(); }
 	public long getTotalIOCount() { return readIOCount.sum() + writeIOCount.sum(); }

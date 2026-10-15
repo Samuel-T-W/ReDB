@@ -60,6 +60,28 @@ public class QueryEngineTest {
 	}
 
 	@Test
+	public void admissionCeilingDerivesPermitsFromPoolSize() {
+		assertEquals(8192, QueryEngine.MIN_QUERY_BUDGET_FRAMES);
+		assertEquals(2, QueryEngine.admissionCeiling(16384));
+		assertEquals(47, QueryEngine.admissionCeiling(388000));
+		assertEquals(1, QueryEngine.admissionCeiling(1));
+		assertEquals(1, QueryEngine.admissionCeiling(8191));
+		assertEquals(1, QueryEngine.admissionCeiling(8192));
+	}
+
+	@Test
+	public void admissionCeilingRejectsNonPositivePoolSize() {
+		assertThrows(IllegalArgumentException.class, () -> QueryEngine.admissionCeiling(0));
+		assertThrows(IllegalArgumentException.class, () -> QueryEngine.admissionCeiling(-1));
+	}
+
+	@Test
+	public void defaultAdmissionGivesTwoQueriesTheBudgetFloor() {
+		QueryEngine engine = new QueryEngine(16384);
+		assertEquals(8192, engine.getFrameBudget());
+	}
+
+	@Test
 	public void constructorRejectsBudgetBelowBnlMinimum() {
 		// 8 / 3 = 2 frames per query, below the BNL minimum of 3
 		assertThrows(IllegalArgumentException.class, () -> new QueryEngine(8, 3));

@@ -89,7 +89,8 @@ public class RunQueryFailureTest {
 
 	@Test
 	public void partialOpenReleasesPinsAndKeepsOriginalException() throws IOException {
-		// Pool of 6 frames with a frame budget of 9 (block size N = 4): the
+		// Pool of 6, budget 12: reserve = (12 - 3) / 4 = 2, N = (12 - 1 - 2) / 2 = 4.
+		// Even without prefetch, 2N + 1 = 9 pins cannot fit in 6 frames: the
 		// second join's block load must run out of frames while the first
 		// join already holds its block pages pinned, failing open() partway.
 		BufferManager shared = new BufferManager(6);
@@ -97,7 +98,8 @@ public class RunQueryFailureTest {
 
 		Path out = tempDir.resolve("partial-open.csv");
 		RuntimeException failure = assertThrows(RuntimeException.class,
-				() -> RunQuery.run("carmencita-1000", "carmencita-1499", 9, false, shared, out));
+				() -> RunQuery.run("carmencita-1000", "carmencita-1499", 12, false, shared, out));
+		assertFalse(java.nio.file.Files.exists(out), "open must fail before the output writer opens");
 
 		// The pool-exhaustion failure must surface as-is; a "Cannot discard
 		// file with pinned page" here would mean cleanup ran against pages the
