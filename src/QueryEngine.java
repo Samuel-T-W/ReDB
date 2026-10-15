@@ -18,7 +18,8 @@ import storage.RawPage;
  * permit frees up; they are queued, never rejected). A query's worst-case
  * simultaneous pins are 2N BNL block pages plus one transient scan/index pin,
  * plus at most readAheadReserve prefetch charges, where
- * readAheadReserve = max(0, min(3 * Scan.READ_AHEAD_PAGES, budget - 3)). Thus
+ * readAheadReserve = min(windows * Scan.READ_AHEAD_PAGES, (budget - 3) / 4),
+ * with three windows for scans or two for the index path. Thus
  * 2 * ((budget - 1 - readAheadReserve) / 2) + 1 + readAheadReserve &lt;= budget.
  * The pin that would take a query to its peak is only requested while it holds
  * at most budget - 1 charges.

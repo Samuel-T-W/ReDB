@@ -1,6 +1,7 @@
 package buffer;
 
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -8,12 +9,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * One query runs on one thread, so a thread binding covers every pin path,
  * including BTreeManager, without passing a budget through every operator.
  */
-public final class FrameBudget {
+public final class FrameBudget implements AutoCloseable {
 
 	private static final ThreadLocal<FrameBudget> CURRENT = new ThreadLocal<>();
 	private final int limit;
 	private final int prefetchReserve;
 	private int prefetchCharged; // guarded by this; releases can run on loader threads
+	private int inFlightPrefetch;
+	private boolean closed;
 	private final AtomicInteger charged = new AtomicInteger();
 	private final AtomicInteger peakCharged = new AtomicInteger();
 
@@ -53,7 +56,7 @@ public final class FrameBudget {
 
 	// Prefetch shares the total limit but cannot consume the frames sized for BNL pins.
 	public synchronized boolean tryChargePrefetch() {
-		if (prefetchCharged == prefetchReserve || !tryCharge()) return false;
+		if (closed || prefetchCharged == prefetchReserve || !tryCharge()) return false;
 		prefetchCharged++;
 		return true;
 	}
@@ -62,6 +65,35 @@ public final class FrameBudget {
 		if (prefetchCharged == 0) throw new IllegalStateException("prefetch charge already zero");
 		release();
 		prefetchCharged--;
+	}
+
+	synchronized boolean beginPrefetch() {
+		if (closed) return false;
+		inFlightPrefetch++;
+		return true;
+	}
+
+	synchronized void finishPrefetch() {
+		inFlightPrefetch--;
+		notifyAll();
+	}
+
+	synchronized boolean isClosed() { return closed; }
+
+	/** Stops new prefetches and drains submitted tasks before query-file cleanup. */
+	@Override
+	public synchronized void close() {
+		closed = true;
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+		while (inFlightPrefetch != 0) {
+			long remaining = deadline - System.nanoTime();
+			if (remaining <= 0) throw new IllegalStateException("Timed out draining prefetch tasks");
+			try { TimeUnit.NANOSECONDS.timedWait(this, remaining); }
+			catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				throw new IllegalStateException("Interrupted draining prefetch tasks", e);
+			}
+		}
 	}
 
 	public int charged() { return charged.get(); }

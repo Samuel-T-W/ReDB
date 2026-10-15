@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -19,6 +20,33 @@ class PrefetchTest {
 
 	private String pages() throws Exception {
 		return Files.write(dir.resolve("pages"), new byte[3 * RawPage.MAX_PAGE_LEN]).toString();
+	}
+
+	@Test
+	void closeWaitsForQueuedPrefetchWhichSkipsDiscardedFile() throws Exception {
+		String file = pages();
+		BufferManager bm = new BufferManager(2);
+		var held = new LinkedBlockingQueue<Runnable>();
+		bm.setPrefetchExecutor(held::add);
+		FrameBudget budget = new FrameBudget(2, 1);
+		try (var worker = Executors.newSingleThreadExecutor(); var scope = FrameBudget.install(budget)) {
+			bm.prefetch(file, 0);
+			assertEquals(1, budget.charged());
+			var closing = worker.submit(budget::close);
+			try {
+				long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+				while (!budget.isClosed() && System.nanoTime() < deadline) Thread.sleep(1);
+				assertTrue(budget.isClosed());
+				assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+				bm.discardFile(file); // Reproduce a task starting after discard but before deletion.
+				held.remove().run();
+				closing.get(5, TimeUnit.SECONDS);
+				assertEquals(0, budget.charged());
+				assertEquals(0, bm.getReadIOCount());
+				assertEquals(1, bm.getPrefetchSkippedBudget());
+				assertTrue(bm.bufferedFileIds().isEmpty());
+			} finally { held.forEach(Runnable::run); }
+		}
 	}
 
 	@Test
@@ -128,6 +156,7 @@ class PrefetchTest {
 			assertDoesNotThrow(() -> bm.prefetch("unused", 0));
 			assertEquals(4, bm.getPrefetchFailed());
 			assertEquals(0, budget.charged());
+			budget.close(); // Failed loads and rejected submissions must both drain.
 		}
 	}
 

@@ -14,6 +14,17 @@ class FrameBudgetTest {
 	@TempDir Path dir;
 
 	@Test
+	void closedBudgetRejectsPrefetchAndCloseIsIdempotent() {
+		FrameBudget budget = new FrameBudget(3, 1);
+		budget.close();
+		assertTrue(budget.isClosed());
+		assertFalse(budget.tryChargePrefetch());
+		assertFalse(budget.beginPrefetch());
+		assertEquals(0, budget.charged());
+		assertDoesNotThrow(budget::close);
+	}
+
+	@Test
 	void twoPrefetchesLeaveThreePinsInFiveFrameBudget() {
 		FrameBudget budget = new FrameBudget(5, 2);
 		assertTrue(budget.tryChargePrefetch());

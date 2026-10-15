@@ -174,24 +174,38 @@ public class BufferManager {
 			prefetchSkippedBudget.increment();
 			return;
 		}
+		boolean taskRegistered = false;
 		try {
 			PageKey key = new PageKey(fileId, pageId);
 			if (pageTable.containsKey(key)) prefetchAlreadyResident.increment();
 			else {
 				Executor executor = prefetchExecutor;
 				if (executor == null) executor = PrefetchExecutorHolder.EXECUTOR;
-				executor.execute(() -> loadPrefetch(key, budget));
-				return;
+				if (budget != null && !budget.beginPrefetch()) {
+					prefetchSkippedBudget.increment();
+				} else {
+					taskRegistered = budget != null;
+					executor.execute(() -> loadPrefetch(key, budget));
+					return;
+				}
 			}
 		} catch (RuntimeException | Error e) {
 			prefetchFailed.increment();
 		}
-		if (budget != null) budget.releasePrefetch();
+		try {
+			if (budget != null) budget.releasePrefetch();
+		} finally {
+			if (taskRegistered) budget.finishPrefetch();
+		}
 	}
 
 	private void loadPrefetch(PageKey key, FrameBudget budget) {
 		boolean loaded = false;
 		try {
+			if (budget != null && budget.isClosed()) {
+				prefetchSkippedBudget.increment();
+				return;
+			}
 			if (loadPage(key, false, budget) != null) {
 				loaded = true;
 				prefetchLoaded.increment();
@@ -199,7 +213,11 @@ public class BufferManager {
 		} catch (IOException | RuntimeException | Error e) {
 			prefetchFailed.increment();
 		} finally {
-			if (!loaded && budget != null) budget.releasePrefetch();
+			try {
+				if (!loaded && budget != null) budget.releasePrefetch();
+			} finally {
+				if (budget != null) budget.finishPrefetch();
+			}
 		}
 	}
 

@@ -52,6 +52,10 @@ public class RunQuery {
 
     static final int BTREE_DEGREE = BTreeManager.maxDegree(TITLE_LEN);
 
+    static int readAheadReserve(int budget, boolean useIndex) {
+        return Math.max(0, Math.min((useIndex ? 2 : 3) * Scan.READ_AHEAD_PAGES, (budget - 3) / 4));
+    }
+
     public static long run(
             String startRange,
             String endRange,
@@ -82,16 +86,19 @@ public class RunQuery {
             Path outputPath) throws IOException {
         // Decision (SAM-54): only one leaf scan advances at a time, but a paused scan
         // (the outer during inner rescans) keeps its unconsumed window charged, so
-        // Movies, the WorkedOn temp file and People can each hold one.
-        int readAheadReserve = Math.max(0, Math.min(3 * Scan.READ_AHEAD_PAGES, frameBudget - 3));
-        // Peak pins are 2N + 1; leave room for all three prefetch windows.
+        // Movies, the WorkedOn temp file and People can each hold one; IndexScan
+        // does not prefetch, so the index path needs only two windows.
+        // Cap read-ahead at a quarter of spare frames to preserve small BNL blocks.
+        int readAheadReserve = readAheadReserve(frameBudget, useIndex);
+        // Peak pins are 2N + 1; leave room for the bounded prefetch reserve.
         int N = (frameBudget - 1 - readAheadReserve) / 2;
         if (N < 1) {
             throw new IllegalArgumentException("buffer_size must be at least 3 to run BNL join");
         }
 
         QueryContext query = QueryContext.create(bm, outputPath);
-        var budgetScope = FrameBudget.install(new FrameBudget(frameBudget, readAheadReserve));
+        FrameBudget budget = new FrameBudget(frameBudget, readAheadReserve);
+        var budgetScope = FrameBudget.install(budget);
         Throwable queryFailure = null;
         try {
             // ---- WorkedOn projection schema: {movieId, personId} ------------
@@ -204,7 +211,13 @@ public class RunQuery {
             // registered, so plan-construction failures cannot leak state into
             // a caller-provided, long-lived BufferManager.
             try {
-                query.cleanup();
+                // Drain queued loads before discarding their temp files; clean
+                // up even if draining times out.
+                try {
+                    budget.close();
+                } finally {
+                    query.cleanup();
+                }
             } catch (RuntimeException cleanupFailure) {
                 if (queryFailure == null) {
                     throw cleanupFailure;
