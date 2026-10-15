@@ -22,6 +22,15 @@ describe("iterations data", () => {
     expect(getIteration(999)).toBeUndefined();
   });
 
+  it("matches every performance row to its table columns", () => {
+    for (const iteration of ITERATIONS) {
+      if (!iteration.performance) continue;
+      for (const row of iteration.performance.rows) {
+        expect(row.cells.length).toBe(iteration.performance.columns.length);
+      }
+    }
+  });
+
   it("points LATEST_IMPLEMENTED at the highest implemented iteration", () => {
     expect(LATEST_IMPLEMENTED.status).toBe("implemented");
     const highestImplemented = [...ITERATIONS]
