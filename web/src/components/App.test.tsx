@@ -34,8 +34,8 @@ describe("App routing", () => {
   });
 
   it("leads a planned iteration with how it works, and no simulation", () => {
-    renderAt("/iteration/2");
-    const planned = getIteration(2)!;
+    renderAt("/iteration/3");
+    const planned = getIteration(3)!;
     expect(
       screen.getByRole("heading", { name: planned.explanation[0].title }),
     ).toBeInTheDocument();
@@ -73,7 +73,7 @@ describe("Iteration view tabs", () => {
   it("opens each iteration on its own first view rather than the last one's tab", () => {
     // Sliding between iterations keeps IterationPage mounted, so a tab chosen
     // on one iteration must not follow you to the next.
-    renderAt("/iteration/2");
+    renderAt("/iteration/3");
     fireEvent.click(screen.getByRole("link", { name: /v1/i }));
     expect(screen.getByRole("tab", { name: "Simulation" })).toHaveAttribute(
       "aria-selected",
@@ -83,7 +83,7 @@ describe("Iteration view tabs", () => {
   });
 
   it("drops the tab strip when a planned iteration has only one view", () => {
-    renderAt("/iteration/2");
+    renderAt("/iteration/3");
     expect(screen.queryByRole("tab", { name: "Simulation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Performance" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "How it works" })).not.toBeInTheDocument();

@@ -1104,6 +1104,10 @@ footer {
 }
 .perf-table td {
   font-family: var(--mono);
+  white-space: nowrap;
+}
+.perf-split .panel:has(.perf-table) {
+  overflow-x: auto;
 }
 .perf-table td:first-child {
   color: var(--text);

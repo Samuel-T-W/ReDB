@@ -137,23 +137,21 @@ export default function IterationPage() {
             </div>
             <div className="perf-split">
               <section className="panel">
-                <h3>By worker count</h3>
+                <h3>{iteration.performance.tableTitle}</h3>
                 <table className="perf-table">
                   <thead>
                     <tr>
-                      <th>workers</th>
-                      <th>throughput</th>
-                      <th>mean latency</th>
-                      <th>peak memory</th>
+                      {iteration.performance.columns.map((column) => (
+                        <th key={column}>{column}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {iteration.performance.rows.map((r) => (
-                      <tr key={r.concurrency}>
-                        <td>{r.concurrency}</td>
-                        <td>{r.throughput}</td>
-                        <td>{r.latency}</td>
-                        <td>{r.rss}</td>
+                      <tr key={r.cells[0]}>
+                        {r.cells.map((cell, index) => (
+                          <td key={index}>{cell}</td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>

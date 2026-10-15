@@ -39,7 +39,7 @@ const GOALS = [
   {
     n: "03",
     title: "Built from scratch in Java",
-    body: "Pages and record slots, the buffer pool and its LRU eviction, the B+ tree and its splits, and the pull-based open / next / close operators are all hand-written. Nothing underneath is borrowed from an existing database.",
+    body: "Pages and record slots, the buffer pool and its clock eviction, the B+ tree and its splits, and the pull-based open / next / close operators are all hand-written. Nothing underneath is borrowed from an existing database.",
   },
   {
     n: "04",
@@ -51,7 +51,9 @@ const GOALS = [
 const BADGES = [
   "Java 21",
   "4 KB pages",
-  "LRU buffer pool",
+  "lock-free buffer pool",
+  "concurrent queries",
+  "sequential read-ahead",
   "B+ tree index",
   "block nested-loop joins",
   "no database dependencies",
@@ -120,10 +122,10 @@ export default function Home() {
         <p className="eyebrow">Storage + query engine · Java</p>
         <h1>A read-only query engine, built from scratch.</h1>
         <p className="lede">
-          ReDB stores tables as 4 KB pages, caches them in its own buffer pool, indexes them with a
-          B+ tree, and runs queries through pull-based operators - all written by hand in Java. It
-          is deliberately scoped read-only, so the work goes deep on query planning and execution
-          performance rather than wide on transactions and recovery.
+          ReDB stores tables as 4 KB pages, caches them in one buffer pool shared by concurrent
+          queries, indexes them with a B+ tree, and runs queries through pull-based operators - all
+          written by hand in Java. It is deliberately scoped read-only, so the work goes deep on
+          query planning and execution performance rather than wide on transactions and recovery.
         </p>
         <div className="cta">
           <Link className="btn primary" to={`/iteration/${LATEST_IMPLEMENTED.id}`}>
